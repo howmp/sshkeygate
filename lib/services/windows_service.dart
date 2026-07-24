@@ -135,34 +135,88 @@ String _resolveExecutablePath() {
 // 3. 锁屏检测
 // =============================================================================
 //
-// 通过 FFI 调用 OpenInputDesktop 检测锁屏状态。
-// 当桌面被锁定时 OpenInputDesktop 返回 0（无法访问输入桌面）。
-// 使用 5 秒定时器轮询。
-//
+// 通过 WTSQuerySessionInformationW (wtsapi32.dll) 查询当前会话的锁屏状态。
+// 使用 WTSSessionInfoEx (WTS_INFO_CLASS = 25) 返回 WTSINFOEX 结构体，
+// 解析 WTSINFOEX_LEVEL1.SessionFlags 来判定锁屏。
+// SessionFlags: 0 = 锁定 (WTS_SESSIONSTATE_LOCK), 1 = 解锁
+// 首次轮询延迟 15 秒，避免启动阶段的误判。
 
 typedef LockCallback = void Function();
 
-typedef _OpenInputDesktopNative = IntPtr Function(
-    Uint32 dwFlags, Int32 fInherit, Uint32 dwDesiredAccess);
-typedef _OpenInputDesktopDart = int Function(
-    int dwFlags, int fInherit, int dwDesiredAccess);
+// ---- wtsapi32.dll FFI 绑定 ----
 
-typedef _CloseDesktopNative = Int32 Function(IntPtr hDesktop);
-typedef _CloseDesktopDart = int Function(int hDesktop);
+typedef _WTSQuerySessionInformationWNative = Int32 Function(
+    IntPtr hServer,
+    Uint32 sessionId,
+    Int32 wtsInfoClass,
+    Pointer<Pointer<Void>> ppBuffer,
+    Pointer<Uint32> pBytesReturned);
+typedef _WTSQuerySessionInformationWDart = int Function(
+    int hServer,
+    int sessionId,
+    int wtsInfoClass,
+    Pointer<Pointer<Void>> ppBuffer,
+    Pointer<Uint32> pBytesReturned);
 
-final _user32 = DynamicLibrary.open('user32.dll');
-final _openInputDesktop = _user32.lookupFunction<
-    _OpenInputDesktopNative, _OpenInputDesktopDart>('OpenInputDesktop');
-final _closeDesktop = _user32.lookupFunction<
-    _CloseDesktopNative, _CloseDesktopDart>('CloseDesktop');
+typedef _WTSFreeMemoryNative = Void Function(Pointer<Void> pMemory);
+typedef _WTSFreeMemoryDart = void Function(Pointer<Void> pMemory);
 
-const _desktopReadObjects = 0x0001;
+final _wtsapi32 = DynamicLibrary.open('wtsapi32.dll');
 
-/// 锁屏检测器（FFI 轮询 OpenInputDesktop）
+final _wtsQuerySessionInformationW = _wtsapi32.lookupFunction<
+    _WTSQuerySessionInformationWNative,
+    _WTSQuerySessionInformationWDart>('WTSQuerySessionInformationW');
+
+final _wtsFreeMemory = _wtsapi32
+    .lookupFunction<_WTSFreeMemoryNative, _WTSFreeMemoryDart>('WTSFreeMemory');
+
+// ---- kernel32.dll FFI 绑定 ----
+
+typedef _WTSGetActiveConsoleSessionIdNative = Uint32 Function();
+typedef _WTSGetActiveConsoleSessionIdDart = int Function();
+
+final _k32 = DynamicLibrary.open('kernel32.dll');
+
+final _wtsGetActiveConsoleSessionId = _k32.lookupFunction<
+    _WTSGetActiveConsoleSessionIdNative,
+    _WTSGetActiveConsoleSessionIdDart>('WTSGetActiveConsoleSessionId');
+
+// ---- 常量 ----
+
+/// WTS_CURRENT_SERVER_HANDLE: 表示本地 RD 会话主机服务器
+const _wtsCurrentServer = 0;
+
+/// WTS_INFO_CLASS.WTSSessionInfoEx 枚举值
+const _wtsSessionInfoEx = 25;
+
+/// WTSINFOEX 结构体字段偏移（x64 布局）
+///
+/// typedef struct _WTSINFOEX {
+///     DWORD Level;                  // offset 0
+///     // 4 字节 padding (union 8 字节对齐)
+///     WTSINFOEX_LEVEL Data;         // offset 8
+/// } WTSINFOEX;
+///
+/// typedef struct _WTSINFOEX_LEVEL1 {
+///     ULONG SessionId;              // offset 8（仅文档，未读取）
+///     WTS_CONNECTSTATE_CLASS SessionState;  // offset 12（仅文档，未读取）
+///     LONG SessionFlags;            // offset 16
+/// } WTSINFOEX_LEVEL1;
+const _offsetLevel = 0;
+const _offsetSessionFlags = 16;
+
+/// WTS_SESSIONSTATE_LOCK = 0
+const _sessionStateLock = 0;
+
+/// 锁屏检测器
+///
+/// 每 5 秒轮询一次锁屏状态（首次延迟 15 秒）。
+/// 检测到锁屏时触发回调（仅从解锁→锁定状态转换时触发）。
 class LockDetector {
   LockCallback? _onLock;
   bool _isRunning = false;
   bool _wasLocked = false;
+  bool _firstPoll = true;
 
   bool get isRunning => _isRunning;
 
@@ -177,7 +231,11 @@ class LockDetector {
 
   void _poll() {
     if (!_isRunning) return;
-    Future.delayed(const Duration(seconds: 5), () {
+    final delay =
+        _firstPoll ? const Duration(seconds: 15) : const Duration(seconds: 5);
+    _firstPoll = false;
+
+    Future.delayed(delay, () {
       if (!_isRunning) return;
       final locked = _isDesktopLocked();
       if (locked && !_wasLocked) {
@@ -188,11 +246,60 @@ class LockDetector {
     });
   }
 
+  /// 通过 WTSQuerySessionInformationW 查询当前会话的锁屏状态
+  ///
+  /// 解析返回的 WTSINFOEX 结构体，读取 WTSINFOEX_LEVEL1.SessionFlags：
+  /// - 0 (WTS_SESSIONSTATE_LOCK) = 已锁定
+  /// - 1 (WTS_SESSIONSTATE_UNLOCK) = 已解锁
   static bool _isDesktopLocked() {
-    final hDesk = _openInputDesktop(0, 0, _desktopReadObjects);
-    if (hDesk == 0) return true;
-    _closeDesktop(hDesk);
-    return false;
+    // 1. 获取活跃控制台会话 ID
+    final sessionId = _wtsGetActiveConsoleSessionId();
+
+    // 0xFFFFFFFF 表示没有活跃的控制台会话
+    if (sessionId == 0xFFFFFFFF) {
+      return false;
+    }
+
+    // 2. 查询会话信息
+    final ppBuffer = calloc<Pointer<Void>>();
+    final pBytesReturned = calloc<Uint32>();
+
+    try {
+      final result = _wtsQuerySessionInformationW(
+        _wtsCurrentServer,
+        sessionId,
+        _wtsSessionInfoEx,
+        ppBuffer,
+        pBytesReturned,
+      );
+
+      if (result == 0 || ppBuffer.value.address == 0) {
+        return false;
+      }
+
+      // 3. 解析 WTSINFOEX 结构体
+      final rawBuf = ppBuffer.value.cast<Uint8>();
+
+      final level = (rawBuf + _offsetLevel).cast<Uint32>().value;
+
+      if (level != 1) {
+        return false;
+      }
+
+      final sessionFlags = (rawBuf + _offsetSessionFlags).cast<Int32>().value;
+
+      // SessionFlags == 0 → WTS_SESSIONSTATE_LOCK
+      final locked = sessionFlags == _sessionStateLock;
+
+      return locked;
+    } finally {
+      // 释放 WTS 分配的缓冲区
+      if (ppBuffer.value.address != 0) {
+        _wtsFreeMemory(ppBuffer.value);
+      }
+      calloc.free(ppBuffer);
+      calloc.free(pBytesReturned);
+    }
   }
 
   void stop() {
@@ -244,25 +351,25 @@ typedef _OpenProcessNative = IntPtr Function(
 typedef _OpenProcessDart = int Function(
     int dwDesiredAccess, int bInheritHandle, int dwProcessId);
 
-typedef _QueryFullProcessImageNameWNative = Int32 Function(
-    IntPtr hProcess, Uint32 dwFlags, Pointer<Utf16> lpExeName, Pointer<Uint32> lpdwSize);
-typedef _QueryFullProcessImageNameWDart = int Function(
-    int hProcess, int dwFlags, Pointer<Utf16> lpExeName, Pointer<Uint32> lpdwSize);
+typedef _QueryFullProcessImageNameWNative = Int32 Function(IntPtr hProcess,
+    Uint32 dwFlags, Pointer<Utf16> lpExeName, Pointer<Uint32> lpdwSize);
+typedef _QueryFullProcessImageNameWDart = int Function(int hProcess,
+    int dwFlags, Pointer<Utf16> lpExeName, Pointer<Uint32> lpdwSize);
 
 typedef _CloseHandleNative = Int32 Function(IntPtr hObject);
 typedef _CloseHandleDart = int Function(int hObject);
 
 final _kernel32 = DynamicLibrary.open('kernel32.dll');
 
-final _openProcess = _kernel32.lookupFunction<
-    _OpenProcessNative, _OpenProcessDart>('OpenProcess');
+final _openProcess = _kernel32
+    .lookupFunction<_OpenProcessNative, _OpenProcessDart>('OpenProcess');
 
 final _queryFullProcessImageNameW = _kernel32.lookupFunction<
     _QueryFullProcessImageNameWNative,
     _QueryFullProcessImageNameWDart>('QueryFullProcessImageNameW');
 
-final _closeHandle = _kernel32.lookupFunction<
-    _CloseHandleNative, _CloseHandleDart>('CloseHandle');
+final _closeHandle = _kernel32
+    .lookupFunction<_CloseHandleNative, _CloseHandleDart>('CloseHandle');
 
 const _processQueryLimitedInformation = 0x1000;
 
@@ -282,7 +389,8 @@ Future<String?> getProcessPathFromPid(int pid) async {
     size.value = 260;
 
     try {
-      final result = _queryFullProcessImageNameW(hProcess, 0, buffer.cast(), size);
+      final result =
+          _queryFullProcessImageNameW(hProcess, 0, buffer.cast(), size);
       if (result != 0 && size.value > 0) {
         return buffer.cast<Utf16>().toDartString(length: size.value);
       }

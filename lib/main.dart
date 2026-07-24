@@ -121,8 +121,6 @@ void main() async {
   winService.lockDetector.start(() {
     if (!appService.lockOnScreenLock) return;
     appService.lock();
-    logService.log(
-        allowed: false, reason: '锁屏检测', keyName: '', processName: '');
   });
 
   SystemChrome.setApplicationSwitcherDescription(
