@@ -6,6 +6,7 @@
 
 - **SSH Agent** — Windows 使用 `\\.\pipe\openssh-ssh-agent` 命名管道，与 OpenSSH 原生兼容；macOS 使用 `~/.sshkeygate/agent.sock` Unix socket。支持 Ed25519 / RSA / ECDSA，含 `rsa-sha2-256` / `rsa-sha2-512` 签名算法
 - **密钥导入** — 文本粘贴、拖拽文件、`~/.ssh` 目录扫描（识别加密密钥并可填口令）、Bitwarden / Vaultwarden 同步
+- **密钥列表** — 按名称或指纹筛选，可按导入顺序 / 名称 / 算法排序
 - **策略审批** — 每次确认 / 会话授权 / 定时授权 / 信任进程 四种模式
 - **签名确认弹窗** — 可配置倒计时（10–120 秒，默认 30），超时自动拒绝；并发请求排队，一次只展示一个
 - **进程识别** — Windows 走 `GetNamedPipeClientProcessId` + `QueryFullProcessImageNameW`；macOS 走 `LOCAL_PEERPID` + `kern.procargs2`。无法识别来源时永不自动放行
@@ -154,6 +155,18 @@ keys/<id> = AES-256-GCM(私钥 PEM, enc_key)
 - **锁定态**：内存中无密钥材料，SSH 请求直接失败
 - **解锁后**：内存仅保留元数据与公钥 blob
 - **签名时**：解密单条私钥 → 签名 → 清零并丢弃
+
+清零用 `zero()`（底层是一次 `runtime.memclrNoHeapPointers`，不会被编译器优化掉）。
+但 Go 运行时让「彻底擦除」做不到，这是**已知限制**而非疏漏：
+
+- 密码以 `string` 传入（Go 字符串不可变），调用方持有的副本无法清除；
+  `deriveKey` 能清的只是它自己建的字节切片
+- `aes.NewCipher` 会把密钥复制进轮密钥调度表，`ssh.ParseRawPrivateKey`
+  返回的私钥结构也持有明文材料，两者都没有清除接口
+- 标准库的 `runtime/secret`（Go 1.26+）**只在 linux/amd64 与 linux/arm64 上生效**，
+  在 Windows / macOS 上 `secret.Do` 直接调用函数、不做任何擦除，因此用不上
+
+结论：应用对敏感缓冲区尽力清零，但不承诺进程内存中绝无残留。
 
 ### 静态密钥保护
 

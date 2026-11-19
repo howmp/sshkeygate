@@ -65,13 +65,23 @@ func Listen(srv *Server) (*Listener, error) {
 // Endpoint describes where clients connect.
 func (l *Listener) Endpoint() string { return SocketPath() }
 
+// ErrPipeInUse reports that another agent already serves the endpoint.
+var ErrPipeInUse = errors.New("SSH agent 端点已被其它程序占用")
+
+// Conflict reports whether another agent held the endpoint when this
+// listener started.
+//
+// On macOS the socket belongs to one process only, so a conflict is a
+// failure to bind and Listen returns it; there is nothing left to report.
+func (l *Listener) Conflict() error { return nil }
+
 // AcceptLoop serves connections until Close. When tryPeer is false the peer
 // identity is left empty, which makes every request ask for approval.
-func (l *Listener) AcceptLoop(tryPeer bool) {
+func (l *Listener) AcceptLoop(tryPeer bool) error {
 	for {
 		conn, err := l.inner.AcceptUnix()
 		if err != nil {
-			return
+			return nil
 		}
 		go func(c *net.UnixConn) {
 			peer := Peer{}

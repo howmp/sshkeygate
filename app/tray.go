@@ -59,6 +59,9 @@ func (a *App) refreshTray() {
 
 // agentStateLabel names whether the agent is listening.
 func (a *App) agentStateLabel() string {
+	if a.AgentConflict() {
+		return a.t("tray.conflict")
+	}
 	if a.AgentRunning() {
 		return a.t("tray.running")
 	}

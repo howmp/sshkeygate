@@ -71,6 +71,7 @@ type App struct {
 	mu         sync.Mutex
 	running    bool
 	dockPolicy dockPolicy
+	conflict   bool
 
 	// systemDark and systemLocale cache what MyGo reports about the desktop,
 	// read once the app is ready. Views must not ask MyGo for them: a view
@@ -132,6 +133,12 @@ type App struct {
 
 	// confirmOpen mirrors whether the signature prompt is on screen.
 	confirmOpen bool
+
+	// keyFilter narrows the key list to the names and fingerprints that
+	// contain it; keySort picks the order its rows appear in, as an index
+	// into keySortNames.
+	keyFilter string
+	keySort   int
 
 	keyList   *ui.ListState
 	logList   *ui.ListState
@@ -510,6 +517,60 @@ func (a *App) CopyPublicKey(k keystore.Key) {
 	a.setStatus(a.t("status.copied"))
 }
 
+// Key sort orders, indexed by the order the select offers them.
+const (
+	keySortImported = iota
+	keySortName
+	keySortAlgorithm
+)
+
+// keySortLabels names the orders for the select; the view localises them.
+func (a *App) keySortLabels() []string {
+	return []string{
+		a.t("keys.sortImported"),
+		a.t("keys.sortName"),
+		a.t("keys.sortAlgorithm"),
+	}
+}
+
+// VisibleKeys returns the keys the list should show: the ones matching the
+// filter, in the chosen order.
+//
+// The list is built from the same slice the rows index, so a row can never
+// point past the end after the filter changed.
+func (a *App) VisibleKeys() []keystore.Key {
+	keys := a.Keys.Keys()
+	filter := strings.ToLower(strings.TrimSpace(a.keyFilter))
+	if filter != "" {
+		kept := make([]keystore.Key, 0, len(keys))
+		for _, k := range keys {
+			if strings.Contains(strings.ToLower(k.Name), filter) ||
+				strings.Contains(strings.ToLower(k.Fingerprint), filter) {
+				kept = append(kept, k)
+			}
+		}
+		keys = kept
+	}
+	// Sorting a copy keeps the store's own order, which the imported order
+	// is defined by.
+	switch a.keySort {
+	case keySortName:
+		keys = append([]keystore.Key(nil), keys...)
+		sort.SliceStable(keys, func(i, j int) bool {
+			return strings.ToLower(keys[i].Name) < strings.ToLower(keys[j].Name)
+		})
+	case keySortAlgorithm:
+		keys = append([]keystore.Key(nil), keys...)
+		sort.SliceStable(keys, func(i, j int) bool {
+			if keys[i].Algorithm != keys[j].Algorithm {
+				return keys[i].Algorithm < keys[j].Algorithm
+			}
+			return strings.ToLower(keys[i].Name) < strings.ToLower(keys[j].Name)
+		})
+	}
+	return keys
+}
+
 // ── Import ──────────────────────────────────────────────────────────────
 
 // ImportText imports the key from the text tab.
@@ -543,6 +604,9 @@ func (a *App) ImportText() {
 		default:
 			a.textKey, a.textName, a.textPass = "", "", ""
 			a.setStatus(a.t("status.imported"))
+			// The key is in the list now, so the list is where the user
+			// wants to be.
+			a.page = PageKeys
 		}
 	})
 }
@@ -642,6 +706,11 @@ func (a *App) ImportSelected() {
 		}
 		mygo.RunOnMain(func() {
 			a.status = a.tf("status.importDone", ok, failed)
+			// Leave the import page when something arrived, so the new keys
+			// are visible; stay when nothing did, where the page explains why.
+			if ok > 0 {
+				a.page = PageKeys
+			}
 		})
 		return nil
 	}, func(error) { a.ScanDirectory() })
@@ -681,6 +750,9 @@ func (a *App) SyncBitwarden() {
 		mygo.RunOnMain(func() {
 			a.bwPass = ""
 			a.status = a.tf("status.syncDone", imported, skipped)
+			if imported > 0 {
+				a.page = PageKeys
+			}
 		})
 		return nil
 	}, func(err error) {
@@ -855,6 +927,32 @@ func (a *App) AgentRunning() bool {
 func (a *App) SetAgentRunning(running bool) {
 	a.mu.Lock()
 	a.running = running
+	a.mu.Unlock()
+	if !a.appReady {
+		return
+	}
+	mygo.RunOnMain(func() {
+		a.refreshTray()
+		a.notify()
+	})
+}
+
+// AgentConflict reports whether another agent holds the endpoint.
+//
+// When it does, this app cannot serve a single client: every ssh connection
+// reaches the other agent instead. The status says so, because an app that
+// looks healthy while doing nothing is worse than one that says it cannot.
+func (a *App) AgentConflict() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.conflict
+}
+
+// SetAgentConflict records whether another agent holds the endpoint. It is
+// safe from any goroutine.
+func (a *App) SetAgentConflict(conflict bool) {
+	a.mu.Lock()
+	a.conflict = conflict
 	a.mu.Unlock()
 	if !a.appReady {
 		return

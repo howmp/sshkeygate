@@ -43,6 +43,7 @@ var messages = map[string]message{
 	"tray.quit":     {"退出", "Quit"},
 	"tray.running":  {"运行中", "running"},
 	"tray.stopped":  {"已停止", "stopped"},
+	"tray.conflict": {"被占用", "in use"},
 	"tray.unlocked": {"已解锁", "unlocked"},
 	"tray.locked":   {"已锁定", "locked"},
 
@@ -63,6 +64,11 @@ var messages = map[string]message{
 	"keys.addTip":           {"添加密钥", "Add a key"},
 	"keys.empty":            {"暂无密钥", "No keys yet"},
 	"keys.emptyHint":        {"到「导入密钥」页面添加", "Add one on the Import page"},
+	"keys.noMatch":          {"没有匹配的密钥", "No key matches the filter"},
+	"keys.filter":           {"筛选密钥", "Filter keys"},
+	"keys.sortImported":     {"导入顺序", "Imported"},
+	"keys.sortName":         {"名称", "Name"},
+	"keys.sortAlgorithm":    {"算法", "Type"},
 	"keys.copy":             {"复制", "Copy"},
 	"keys.rename":           {"改名", "Rename"},
 	"keys.delete":           {"删除", "Delete"},
@@ -225,6 +231,10 @@ var messages = map[string]message{
 	"err.openData":      {"无法打开数据目录：%s", "Could not open the data folder: %s"},
 	"err.agentFailed":   {"Agent 启动失败：%s", "The agent failed to start: %s"},
 	"err.trustFailed":   {"信任失败：%s", "Could not trust it: %s"},
+	"err.pipeInUse": {
+		"SSH Agent 管道已被其它程序占用，ssh 连接不会经过本程序。请先停用系统自带的 OpenSSH 代理：以管理员身份运行 Set-Service ssh-agent -StartupType Disabled 并重启，或改为指向本程序的端点。",
+		"Another program holds the SSH agent pipe, so ssh connections never reach this app. Stop the built-in OpenSSH agent first: run Set-Service ssh-agent -StartupType Disabled as administrator and restart, or point clients at this app's endpoint.",
+	},
 }
 
 // resolveLanguage picks the language to show, following the system when the

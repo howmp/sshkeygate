@@ -30,36 +30,73 @@ const pipeBufferSize = 64 * 1024
 // The pipe is created here rather than through go-winio because the client's
 // process must be read from the pipe handle, which go-winio does not export.
 type Listener struct {
-	srv    *Server
-	closed atomic.Bool
-	done   chan struct{}
-	once   sync.Once
+	srv      *Server
+	closed   atomic.Bool
+	done     chan struct{}
+	once     sync.Once
+	conflict error
 }
 
-// Listen prepares the named pipe listener.
+// Listen prepares the named pipe listener, noting whether another agent
+// already answers on the pipe.
+//
+// Serving alongside another agent is not an error - the instances coexist and
+// clients reach whichever connects first - but it means ssh traffic may go to
+// the other agent, so the caller needs to know.
 func Listen(srv *Server) (*Listener, error) {
-	return &Listener{srv: srv, done: make(chan struct{})}, nil
+	l := &Listener{srv: srv, done: make(chan struct{})}
+	if probeAgent() {
+		l.conflict = fmt.Errorf("%w: %s", ErrPipeInUse, pipePath)
+	}
+	return l, nil
 }
 
 // Endpoint describes where clients connect.
 func (l *Listener) Endpoint() string { return pipePath }
 
+// ErrPipeInUse reports that another process already serves the agent pipe.
+//
+// This is the state a machine is in when the OpenSSH Authentication Agent
+// service is running: the service owns the pipe every ssh client connects
+// to, so clients reach it and never this app.
+var ErrPipeInUse = errors.New("SSH agent 管道已被其它程序占用")
+
+// Conflict reports whether another agent held the pipe when this listener
+// started.
+func (l *Listener) Conflict() error { return l.conflict }
+
+// probeAgent reports whether something is already serving the pipe.
+//
+// Named pipes allow several processes to create instances of the same name,
+// so binding cannot fail that way; the only way to notice the other agent is
+// to connect as a client would. The connection is closed at once, which the
+// other agent sees as a client that hung up.
+func probeAgent() bool {
+	h, err := dialPipeAt(pipePath)
+	if err != nil {
+		return false
+	}
+	windows.CloseHandle(h)
+	return true
+}
+
 // AcceptLoop serves clients until Close. When tryPeer is false the peer
 // identity is left empty, which makes every request ask for approval.
-func (l *Listener) AcceptLoop(tryPeer bool) {
+func (l *Listener) AcceptLoop(tryPeer bool) error {
 	for !l.closed.Load() {
 		handle, err := createPipeInstance()
 		if err != nil {
 			if l.closed.Load() {
-				return
+				return nil
 			}
-			time.Sleep(50 * time.Millisecond)
-			continue
+			// A failed bind is a real error now: another agent does not
+			// cause it, so retrying would only hide a broken install.
+			return fmt.Errorf("创建 agent 管道失败: %w", err)
 		}
 		if err := connectPipe(handle); err != nil {
 			windows.CloseHandle(handle)
 			if l.closed.Load() {
-				return
+				return nil
 			}
 			continue
 		}
@@ -72,6 +109,7 @@ func (l *Listener) AcceptLoop(tryPeer bool) {
 			_ = l.srv.Serve(conn, peer)
 		}(handle)
 	}
+	return nil
 }
 
 // Close stops the listener, waking a blocked ConnectNamedPipe.

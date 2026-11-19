@@ -4,6 +4,7 @@ package agent
 
 import (
 	"encoding/binary"
+	"errors"
 	"io"
 	"net"
 	"os"
@@ -124,6 +125,61 @@ func TestPipeListenerCloseStopsAccept(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("AcceptLoop did not return after Close")
 	}
+}
+
+// TestPipeConflictIsReported checks that a listener notices another agent
+// already serving the pipe.
+//
+// Named pipes let several processes create instances of the same name, so
+// binding succeeds either way; what matters is that the app can tell the
+// user its traffic may be answered by someone else.
+func TestPipeConflictIsReported(t *testing.T) {
+	prev := pipePath
+	pipePath = `\\.\pipe\sshkeygate-test-` + randomSuffix(t)
+	t.Cleanup(func() { pipePath = prev })
+
+	f := newFixture(t, false)
+
+	// A real agent keeps an instance waiting at all times, so this one runs
+	// the accept loop: the probe connects as a client would and is served.
+	holder, err := Listen(f.srv)
+	if err != nil {
+		t.Fatalf("Listen: %v", err)
+	}
+	t.Cleanup(func() { _ = holder.Close() })
+	go holder.AcceptLoop(false)
+
+	// Wait until the instance is there. Each probe consumes the waiting
+	// instance, which the loop then replaces, so the last probe leaves it
+	// briefly unserved; wait for one more after a pause.
+	waitUntilServed(t)
+
+	// A second listener must notice the first.
+	second, err := Listen(f.srv)
+	if err != nil {
+		t.Fatalf("second Listen: %v", err)
+	}
+	defer second.Close()
+	if err := second.Conflict(); !errors.Is(err, ErrPipeInUse) {
+		t.Fatalf("Conflict with another agent = %v, want ErrPipeInUse", err)
+	}
+}
+
+// waitUntilServed blocks until a probe reaches an agent, allowing for the
+// instance the probe itself consumed to be replaced.
+func waitUntilServed(t *testing.T) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if probeAgent() {
+			// The consumed instance is replaced by the accept loop; give it
+			// the time to create the next one before the caller probes again.
+			time.Sleep(50 * time.Millisecond)
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("the holding listener never became reachable")
 }
 
 func firstByte(b []byte) int {

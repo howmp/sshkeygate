@@ -7,17 +7,17 @@
 - [x] **macOS 11.7.10（Big Sur）实机验证**：兼容层已生效，应用可在 11 上启动（dyld 通过、进入解锁界面）
 - [ ] macOS 11 上从 Finder 双击启动（SSH 会话下 Keychain 拒绝交互，需桌面会话确认）
 - [ ] macOS 11 上自动启动（13 以下走 launch agent）与托盘
-- [ ] Windows：系统自带 OpenSSH Authentication Agent 服务占用 `\\.\pipe\openssh-ssh-agent` 时的提示文案与引导（停用服务或改用其它管道名）
+- [ ] macOS 上关窗隐藏 Dock 图标、点 Dock 恢复窗口（代码已就绪并有单测，需桌面会话目视确认）
+- [x] **Windows 管道冲突提示**：系统 OpenSSH agent 占用管道时，托状态显示「被占用」并给出停用引导
 
 ## 加固
 
 - [ ] 解锁失败节流（原 Flutter 版有指数退避，Go 版尚未实现）
-- [ ] 私钥内存清零的可验证性（Go GC 会复制切片，只能尽力而为）
 
 ## UX
 
-- [ ] 密钥列表支持搜索与排序
-- [ ] 导入后自动切换到密钥列表页
+- [x] 密钥列表支持搜索与排序
+- [x] 导入后自动切换到密钥列表页
 
 ## 平台
 
@@ -32,7 +32,7 @@
 - [ ] 支持 SSH 证书（`*-cert-v01@openssh.com`）签名
 - [ ] 密钥导出（导出为 PEM）
 - [ ] 从 `flutter_secure_storage.dat` 的一次性迁移（当前明确不做）
-- [ ] 自动更新（`mygo.Updater`）
+- [ ] 自动更新（`mygo.Updater`，`mygo/updater_*.go` 提供 `Check` / `SetSource` / `SetPrereleases`）
 
 ## macOS 打包
 
@@ -125,4 +125,9 @@ MYGO_LDFLAGS="-macos 11.0" \
 - 不把签名放进独立进程做内存隔离
 - 只有 device_key 进系统凭据库，其余加密落盘（绕过 2560 字节上限）
 - Windows 管道自行实现而不依赖 go-winio，以便获取客户端进程句柄
+- **内存清零尽力而为**：`zero()` 有效但清不干净（Go 字符串不可变、AES 轮密钥与
+  `ssh` 解析结果无法访问），`runtime/secret` 在 Windows / macOS 上是空操作。
+  细节见 README「私钥不驻留内存」
+- **Win32 命名管道不排他**：多个进程可用 `PIPE_UNLIMITED_INSTANCES` 各自创建同名
+  实例，绑定不会失败；因此冲突只能靠「以客户端身份试连」发现，不能靠 `CreateNamedPipe` 报错
 - macOS 最低版本 11.0（Big Sur）：`Info.plist` 与 `-macos` 两处都要设，覆盖 Intel 与 Apple Silicon

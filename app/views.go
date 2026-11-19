@@ -225,7 +225,16 @@ func rowWidth(c *ui.Context) float32 {
 // ── Keys page ───────────────────────────────────────────────────────────
 
 func (a *App) keysPage(c *ui.Context, p *Palette) {
-	ui.Row(c).FillWidth().Justify(ui.End).Children(func() {
+	ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(8).Children(func() {
+		// The filter and the order only make sense once there is a key to
+		// sort; with none, the page shows how to add one.
+		if len(a.Keys.Keys()) > 0 {
+			ui.TextInput(c, &a.keyFilter).Placeholder(a.t("keys.filter")).
+				Background(p.Input).Border(1, p.Border).Radius(6).
+				Height(30).Width(180)
+			ui.Segmented(c, &a.keySort, a.keySortLabels()...).Height(30)
+		}
+		ui.Row(c).FillWidth()
 		btn := ui.Button(c, "").Background(p.Green).TextColor(p.OnPrimary).
 			Height(30).Radius(6).Bold().
 			Tooltip(a.t("keys.addTip"))
@@ -240,11 +249,18 @@ func (a *App) keysPage(c *ui.Context, p *Palette) {
 	})
 	ui.Row(c).Height(12)
 
-	keys := a.Keys.Keys()
-	if len(keys) == 0 {
+	all := a.Keys.Keys()
+	if len(all) == 0 {
 		ui.Column(c).Fill().Center().Gap(4).Children(func() {
 			ui.Text(c, a.t("keys.empty")).FontSize(14).TextColor(p.TextLight)
 			ui.Text(c, a.t("keys.emptyHint")).FontSize(12).TextColor(p.TextLight)
+		})
+		return
+	}
+	keys := a.VisibleKeys()
+	if len(keys) == 0 {
+		ui.Column(c).Fill().Center().Gap(4).Children(func() {
+			ui.Text(c, a.t("keys.noMatch")).FontSize(14).TextColor(p.TextLight)
 		})
 		return
 	}

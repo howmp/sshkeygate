@@ -69,7 +69,7 @@ func main() {
 	})
 
 	var listener interface {
-		AcceptLoop(bool)
+		AcceptLoop(bool) error
 		Close() error
 	}
 
@@ -103,8 +103,17 @@ func main() {
 			application.SetStatusf("err.agentFailed", err.Error())
 		} else {
 			listener = ln
+			if conflict := ln.Conflict(); conflict != nil {
+				// Another agent answers on the same endpoint, so a client may
+				// reach it instead of this app; say so rather than looking
+				// healthy while gating nothing.
+				application.SetAgentConflict(true)
+				application.SetStatusf("err.pipeInUse", conflict.Error())
+			}
 			go func() {
-				ln.AcceptLoop(true)
+				if err := ln.AcceptLoop(true); err != nil {
+					application.SetStatusf("err.agentFailed", err.Error())
+				}
 				application.SetAgentRunning(false)
 			}()
 			application.SetAgentRunning(true)

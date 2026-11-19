@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"runtime"
 	"sync"
 
 	"github.com/google/uuid"
@@ -195,7 +196,13 @@ func (s *Store) Sign(k Key, data []byte, flags uint32) (*ssh.Signature, error) {
 	if err != nil {
 		return nil, err
 	}
-	return parsed.Sign(data, flags)
+	// The parsed key keeps its own copy of the passphrase-free PEM, which is
+	// just as sensitive as the one from the vault; wipe it once the signature
+	// is made. The parsed signer's key material cannot be reached from here.
+	defer zero(parsed.PEM)
+	sig, err := parsed.Sign(data, flags)
+	runtime.KeepAlive(parsed)
+	return sig, err
 }
 
 func bytesEqual(a, b []byte) bool {

@@ -76,6 +76,12 @@ func TestPreview(t *testing.T) {
 		// The Chinese interface, which has different label widths.
 		a.language = LangChinese
 		writePreview(t, out, mode+"-keys-zh", a, MainWidth, MainHeight, func() { a.page = PageKeys })
+
+		// The keys page with the filter row in use, which is the layout the
+		// search and the order controls add.
+		a.keyFilter = "ed"
+		writePreview(t, out, mode+"-keys-filtered", a, MainWidth, MainHeight, func() { a.page = PageKeys })
+		a.keyFilter = ""
 	}
 }
 
