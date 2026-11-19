@@ -83,14 +83,15 @@ jobs:
 
       - name: Collect
         run: |
-          ls -l dist/darwin-universal
-          find dist -name '*.dmg' -maxdepth 3
+          mkdir -p out
+          find dist -name '*.dmg' -maxdepth 3 -exec cp {} out/ \;
+          ls -l out
 
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
           name: macos
-          path: dist/**/*.dmg
+          path: out/*.dmg
           if-no-files-found: error
 
   publish:
@@ -109,8 +110,14 @@ jobs:
           path: release
           merge-multiple: true
 
-      - name: List
-        run: ls -lR release
+      # A disk image keeps its directory when the artifact is unzipped, so
+      # the assets are gathered into one flat directory first: gh refuses a
+      # directory among the files to upload.
+      - name: Gather the assets
+        run: |
+          mkdir -p assets
+          find release -type f \( -name '*.exe' -o -name '*.dmg' \) -exec cp {} assets/ \;
+          ls -l assets
 
       - name: Publish
         env:
@@ -122,7 +129,7 @@ jobs:
             git push origin "$VERSION"
           fi
 
-          gh release create "$VERSION" release/* \
+          gh release create "$VERSION" assets/* \
             --title "$VERSION" \
             --generate-notes \
             --verify-tag
