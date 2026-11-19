@@ -47,10 +47,9 @@ func TestPreview(t *testing.T) {
 			t.Fatalf("import: %v", err)
 		}
 
-		// Locked page.
-		a.Vault.Lock()
-		a.Keys.Clear()
-		writePreview(t, out, mode+"-unlock", a, LockedWidth, LockedHeight, nil)
+		// Locked page, at the size the app asks for on this platform.
+		unlockWidth, unlockHeight := a.LockedSize()
+		writePreview(t, out, mode+"-unlock", a, unlockWidth, unlockHeight, nil)
 		if err := a.Vault.Unlock("correct horse battery"); err != nil {
 			t.Fatalf("unlock: %v", err)
 		}

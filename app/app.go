@@ -87,6 +87,9 @@ type App struct {
 	promptHidden bool
 	// toast shows a message over the window once it exists.
 	toast func(string)
+	// measuring is true while the unlock card is measured offscreen, so that
+	// render does not bind the real window's toast.
+	measuring bool
 
 	// UI state, main thread only.
 	page       string

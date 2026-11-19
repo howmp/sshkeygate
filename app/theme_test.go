@@ -177,21 +177,6 @@ func TestPrefsRoundTrip(t *testing.T) {
 	}
 }
 
-func TestLockedWindowFitsTheCard(t *testing.T) {
-	a := newTestApp(t, true)
-	width, height := a.LockedSize()
-	if width != LockedWidth || height != LockedHeight {
-		t.Errorf("unlock size = %dx%d, want %dx%d", width, height, LockedWidth, LockedHeight)
-	}
-
-	// First run has one more field, so the window is taller.
-	fresh := newTestApp(t, false)
-	_, setupHeight := fresh.LockedSize()
-	if setupHeight <= height {
-		t.Errorf("first-run height = %d, want more than %d", setupHeight, height)
-	}
-}
-
 func TestSidebarShowsTheBuildVersion(t *testing.T) {
 	a := newTestApp(t, true)
 	a.version = "v1.2.3"

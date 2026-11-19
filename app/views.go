@@ -24,8 +24,11 @@ const (
 func (a *App) View(c *ui.Context) {
 	p := a.palette()
 	c.SetTheme(a.uiTheme())
-	// Status messages go through a toast, which needs the view's context.
-	a.toast = c.Toast
+	// Status messages go through a toast, which needs the view's context. A
+	// render that only measures a page leaves the real window's toast alone.
+	if !a.measuring {
+		a.toast = c.Toast
+	}
 	ui.Column(c).Fill().Background(p.Content).Children(func() {
 		if a.Locked() {
 			a.unlockView(c, p)
