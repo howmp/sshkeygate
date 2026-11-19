@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log"
 	"path/filepath"
+	"strings"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
@@ -18,11 +19,18 @@ import (
 	"github.com/sshkeygate/sshkeygate/internal/vault"
 )
 
+// version is the app version, set by the release build:
+//
+//	go build -ldflags "-X main.version=v0.3.0"
+//
+// A build without it reports the development version.
+var version = "dev"
+
 func main() {
 	// Identify the app before taking the single-instance lock: the lock is
 	// named after the app.
 	mygo.App.SetName("sshkeygate")
-	mygo.App.SetVersion("0.3.0")
+	mygo.App.SetVersion(strings.TrimPrefix(version, "v"))
 	// Declare the interface languages, so the app follows the user's preferred
 	// one instead of falling back to MyGo's English-only default.
 	mygo.App.SetLanguages("zh", "en")
@@ -52,7 +60,7 @@ func main() {
 	srv := agent.New(keys, pol, logSvc)
 	srv.SetConfirm(conf.Prompt)
 
-	application := app.New(v, keys, pol, logSvc, srv, conf, dataDir)
+	application := app.New(v, keys, pol, logSvc, srv, conf, dataDir, version)
 	conf.SetTimeout(application.ConfirmTimeout)
 
 	// A later launch exits and asks the running instance to come forward.

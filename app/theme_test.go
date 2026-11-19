@@ -125,7 +125,7 @@ func TestAppearanceSurvivesRestart(t *testing.T) {
 		conf := NewConfirmer(pol, logSvc)
 		srv := agent.New(keys, pol, logSvc)
 		srv.SetConfirm(conf.Prompt)
-		return New(v, keys, pol, logSvc, srv, conf, dir)
+		return New(v, keys, pol, logSvc, srv, conf, dir, "v0.0.0-test")
 	}
 
 	first := open()
@@ -189,6 +189,17 @@ func TestLockedWindowFitsTheCard(t *testing.T) {
 	_, setupHeight := fresh.LockedSize()
 	if setupHeight <= height {
 		t.Errorf("first-run height = %d, want more than %d", setupHeight, height)
+	}
+}
+
+func TestSidebarShowsTheBuildVersion(t *testing.T) {
+	a := newTestApp(t, true)
+	a.version = "v1.2.3"
+
+	tester := ui.NewTester(a.View, MainWidth, MainHeight)
+	tester.Frame()
+	if !tester.HasText("v1.2.3") {
+		t.Errorf("sidebar does not show the build version: %v", tester.Texts())
 	}
 }
 

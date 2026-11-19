@@ -2,8 +2,6 @@
 
 跨平台 SSH Agent（Windows / macOS），用纯 Go 编写，UI 基于 [MyGo](https://github.com/egoist/mygo) 原生 `ui` 包绘制。支持从 Bitwarden / Vaultwarden 导入密钥。
 
-> 这是 Go 重写版。Flutter 原版保留在 `main` 分支；本分支没有数据迁移，需要重新设置密码并重新导入密钥（`~/.ssh` 扫描与 Bitwarden 同步都是一键完成）。
-
 ## 功能
 
 - **SSH Agent** — Windows 使用 `\\.\pipe\openssh-ssh-agent` 命名管道，与 OpenSSH 原生兼容；macOS 使用 `~/.sshkeygate/agent.sock` Unix socket。支持 Ed25519 / RSA / ECDSA，含 `rsa-sha2-256` / `rsa-sha2-512` 签名算法
@@ -21,7 +19,30 @@
 
 主题与语言默认跟随系统：外观取系统深浅色，语言按首选语言在中文/英文中匹配。系统设置变化时界面即时跟随；在「配置 → 外观」里选定后则以所选为准。
 
-## 构建 & 运行
+## 下载
+
+从 [Releases](https://github.com/howmp/sshkeygate/releases) 获取最新版本：
+
+| 平台 | 文件 |
+|------|------|
+| Windows x64 | `sshkeygate-<version>-windows-amd64.exe` |
+| macOS（Intel + Apple Silicon） | `sshkeygate-<version>.dmg` |
+
+macOS 包目前未签名，首次打开需要「右键 → 打开」，或执行：
+
+```bash
+xattr -dr com.apple.quarantine /Applications/sshkeygate.app
+```
+
+## 客户端接入
+
+- **Windows**：`ssh.exe` 默认连接 `\\.\pipe\openssh-ssh-agent`，无需额外配置
+- **macOS**：把 socket 路径告诉客户端
+  ```bash
+  export SSH_AUTH_SOCK="$HOME/.sshkeygate/agent.sock"
+  ```
+
+## 构建
 
 需要 Go **1.27.3+**（`go.mod` 已声明，`GOTOOLCHAIN=auto` 会自动获取）。
 
@@ -31,45 +52,46 @@ go build -ldflags "-H windowsgui -s -w" -o dist/sshkeygate.exe .
 
 # macOS
 go build -o dist/sshkeygate .
-
-go test ./...                     # 单元测试 + Windows 管道集成测试
-go vet ./...
-gofmt -l .                        # 应为空
-
-# macOS 打包（生成 .app）
-go run github.com/egoist/mygo/cmd/mygo@latest build
 ```
 
-交叉编译校验（MyGo 无 cgo）：
+验证：
 
 ```bash
-GOOS=darwin GOARCH=arm64 go build ./...
+go test ./...      # 单元测试 + Windows 命名管道集成测试
+go vet ./...
+gofmt -l .         # 应为空
+
+GOOS=darwin GOARCH=arm64 go build ./...   # 交叉编译校验（MyGo 无 cgo）
 ```
+
+### 打包
+
+macOS 的 `.app` 与 DMG 由 `mygo build` 产出，配置在 `mygo.json`：
+
+```bash
+# 双架构 .app（arm64 + amd64 由 lipo 合并）与 DMG，需在 macOS 上执行
+go run github.com/egoist/mygo/cmd/mygo@latest build -platform darwin/universal
+```
+
+`darwin/universal` 分别编译 arm64 与 amd64 再合成，一个包同时支持 Apple Silicon 与 Intel。
+DMG 生成与代码签名需要 macOS；签名与公证的完整步骤见 [TODO.md](TODO.md)。
 
 ### 图标
 
-图标沿用原版美术资源（绿色钥匙 + 环内终端提示符），由 `tools/genicon` 转成各尺寸，不手工编辑：
+图标由 `tools/genicon` 生成，不手工编辑：
 
 ```bash
-go run tools/genicon/main.go       # 源图 tools/genicon/source.png → app/assets/icon.png + icon.ico
+go run tools/genicon/main.go       # tools/genicon/source.png → app/assets/icon.png + icon.ico
 
 # 更新 exe 内嵌图标（Windows 资源），随后重新 go build
 go run github.com/akavel/rsrc@latest -ico app/assets/icon.ico -o rsrc_windows_amd64.syso
 ```
 
-- 源图 `tools/genicon/source.png` 为 1024² 透明底 PNG，即原 Flutter 版的 `assets/sshkeygate_icon.png`
+- 源图 `tools/genicon/source.png` 为 1024² 透明底 PNG
 - 缩放用盒式滤波并按预乘 alpha 平均，避免透明边缘渗色
 - 窗口与托盘图标在运行时从 `app/assets/icon.png` 读取（`go:embed`）；登录页与侧边栏也直接绘制它
 - 资源管理器 / 任务栏的 exe 图标来自 `rsrc_windows_amd64.syso`
 - `.ico` 含 16–256 共 9 种尺寸
-
-### 客户端接入
-
-- **Windows**：`ssh.exe` 默认连接 `\\.\pipe\openssh-ssh-agent`，无需额外配置
-- **macOS**：把 socket 路径告诉客户端
-  ```bash
-  export SSH_AUTH_SOCK="$HOME/.sshkeygate/agent.sock"
-  ```
 
 ## 目录结构
 
@@ -78,9 +100,12 @@ main.go                      # 单实例锁、服务装配、窗口/托盘、锁
 app/
   app.go                     # 服务聚合 + 状态 + 动作（解锁/导入/设置）
   views.go                   # 全部界面（侧边栏 + 5 个页面 + 弹窗）
+  theme.go                   # 浅色/深色配色 + MyGo 主题
+  i18n.go                    # 中英文案表
+  icons.go                   # 线性 SVG 图标
   confirm.go                 # 签名确认队列（串行展示 + 倒计时）
   tray.go                    # 托盘菜单
-  icon.go                    # 程序生成的托盘图标
+  icon.go                    # 内嵌应用图标
 internal/
   vault/                     # 加密存储（PBKDF2 + AES-256-GCM，原子写，改密可回滚）
   keystore/                  # 密钥元数据 + 按需解密签名
@@ -89,6 +114,7 @@ internal/
   policy/                    # 4 种策略 + 信任校验
   auditlog/                  # JSONL 审计日志
   bitwarden/                 # prelogin → token → sync → 解密
+tools/genicon/               # 图标生成器
 ```
 
 ## 安全设计
@@ -128,12 +154,13 @@ keys/<id> = AES-256-GCM(私钥 PEM, enc_key)
 | `vault.json` | 盐值 + 加密元数据 | 同左 |
 | `keys/<id>.bin` | 单独加密的私钥 | 同左 |
 | `agent.log` | JSONL 审计日志 | 同左 |
+| `prefs.json` | 主题与语言 | 同左 |
 | device key | Credential Manager | Keychain |
 
 ## 测试
 
 ```
-app/                 # UI（ui.NewTester 无窗口渲染）、确认队列
+app/                 # UI（ui.NewTester 无窗口渲染）、确认队列、主题、i18n、图标、窗口尺寸
 internal/agent       # 协议响应、异常帧、并发、真实 Windows 管道与 peer 识别
 internal/sshkey      # 夹具指纹、三种 RSA flags、加密私钥往返
 internal/vault       # 创建/解锁/改密/中断恢复/密文不含明文
@@ -147,4 +174,4 @@ internal/bitwarden   # EncString v2、MAC 篡改、HKDF 展开、换半重试
 
 - 仅 Windows 与 macOS（Linux 尚未实现）
 - 不支持一个文件包含多把私钥，不支持 SSH 证书签名
-- 界面文案为中文硬编码
+- macOS 包未签名公证，需手动移除 quarantine 属性

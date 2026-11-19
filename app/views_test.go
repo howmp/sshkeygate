@@ -52,7 +52,7 @@ func newTestApp(t *testing.T, createVault bool) *App {
 	conf := NewConfirmer(pol, logSvc)
 	srv := agent.New(keys, pol, logSvc)
 	srv.SetConfirm(conf.Prompt)
-	a := New(v, keys, pol, logSvc, srv, conf, dir)
+	a := New(v, keys, pol, logSvc, srv, conf, dir, "v0.0.0-test")
 	a.SetAgentRunning(true)
 	if createVault {
 		if err := keys.Load(); err != nil {

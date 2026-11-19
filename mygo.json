@@ -1,0 +1,17 @@
+{
+  "name": "sshkeygate",
+  "slug": "sshkeygate",
+  "identifier": "com.sshkeygate.app",
+  "version": "0.3.0",
+  "copyright": "Copyright © 2026 sshkeygate",
+  "license": "MIT",
+  "icon": "app/assets/icon.png",
+  "main": ".",
+  "out": "dist",
+  "macos": {
+    "minimumSystemVersion": "12.0",
+    "infoPlist": {
+      "LSUIElement": false
+    }
+  }
+}

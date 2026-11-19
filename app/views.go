@@ -125,7 +125,7 @@ func (a *App) sidebar(c *ui.Context, p *Palette) {
 			}
 			ui.Column(c).Gap(0).Children(func() {
 				ui.Text(c, "sshkeygate").FontSize(16).Bold().TextColor(p.TextPrimary)
-				ui.Text(c, "v0.3.0").FontSize(10).TextColor(p.TextLight)
+				ui.Text(c, a.version).FontSize(10).TextColor(p.TextLight)
 			})
 		})
 

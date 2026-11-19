@@ -1,0 +1,128 @@
+name: Release
+
+# A tag such as v0.3.0 publishes a Windows executable and a macOS disk
+# image holding a universal app (Apple Silicon and Intel).
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to publish, such as v0.3.0"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  VERSION: ${{ github.event.inputs.tag || github.ref_name }}
+
+jobs:
+  windows:
+    name: Windows executable
+    runs-on: windows-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Test
+        run: go test ./... -timeout 180s
+
+      # rsrc_windows_amd64.syso carries the executable's icon. Regenerate it
+      # so a stale file in the repository cannot ship the wrong icon.
+      - name: Regenerate the executable icon
+        run: go generate .
+
+      - name: Build
+        shell: bash
+        run: |
+          # -H windowsgui keeps the console window from appearing.
+          go build -trimpath -ldflags "-H windowsgui -s -w -X main.version=${VERSION}" \
+            -o "sshkeygate-${VERSION}-windows-amd64.exe" .
+          ls -l *.exe
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: sshkeygate-*-windows-amd64.exe
+          if-no-files-found: error
+
+  macos:
+    name: macOS universal app
+    runs-on: macos-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Test
+        run: go test ./... -timeout 180s
+
+      # mygo build compiles darwin/arm64 and darwin/amd64, merges them with
+      # lipo, and wraps the result in a .app and a disk image. MYGO_LDFLAGS
+      # passes the version the app shows in its sidebar.
+      - name: Build the universal disk image
+        env:
+          MYGO_LDFLAGS: "-X main.version=${{ env.VERSION }}"
+        run: |
+          go run github.com/egoist/mygo/cmd/mygo@latest build \
+            -platform darwin/universal -skip-notarize
+
+      - name: Collect
+        run: |
+          ls -l dist/darwin-universal
+          find dist -name '*.dmg' -maxdepth 3
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: dist/**/*.dmg
+          if-no-files-found: error
+
+  publish:
+    name: Publish the release
+    needs: [windows, macos]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download the artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release
+          merge-multiple: true
+
+      - name: List
+        run: ls -lR release
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # workflow_dispatch runs on a branch, so the tag may need creating.
+          if ! git rev-parse "$VERSION" >/dev/null 2>&1; then
+            git tag "$VERSION"
+            git push origin "$VERSION"
+          fi
+
+          gh release create "$VERSION" release/* \
+            --title "$VERSION" \
+            --generate-notes \
+            --verify-tag

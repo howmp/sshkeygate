@@ -59,6 +59,8 @@ type App struct {
 	Agent   *agent.Server
 	Confirm *Confirmer
 	DataDir string
+	// version is what the sidebar shows under the app name.
+	version string
 
 	win      *mygo.Window
 	tray     *mygo.Tray
@@ -232,9 +234,10 @@ func (a *App) LockOnScreenLock() bool { return a.Vault.Settings().LockOnScreenLo
 // defaultScanDir is where the import page looks for keys first.
 func defaultScanDir() string { return agent.DefaultScanDir() }
 
-// New returns an App over the given services.
+// New returns an App over the given services. The version is shown in the
+// sidebar.
 func New(v *vault.Vault, keys *keystore.Store, pol *policy.Engine, log *auditlog.Log,
-	srv *agent.Server, conf *Confirmer, dataDir string) *App {
+	srv *agent.Server, conf *Confirmer, dataDir, version string) *App {
 	// Start with the appearance saved for the unlock screen: the vault that
 	// holds it is still locked at this point.
 	saved := loadPrefs(dataDir)
@@ -246,6 +249,7 @@ func New(v *vault.Vault, keys *keystore.Store, pol *policy.Engine, log *auditlog
 		Agent:     srv,
 		Confirm:   conf,
 		DataDir:   dataDir,
+		version:   version,
 		page:      PageKeys,
 		keyList:   &ui.ListState{},
 		logList:   &ui.ListState{},
