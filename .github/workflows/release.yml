@@ -104,24 +104,69 @@ jobs:
           grep '"version"' mygo.json
 
       # mygo build compiles darwin/arm64 and darwin/amd64, merges them with
-      # lipo, and wraps the result in a .app and a disk image. MYGO_LDFLAGS
-      # passes the version the app shows in its sidebar, and -macos sets the
-      # deployment target: Go 1.27 links for macOS 13 by default, which dyld
-      # refuses to load on 11 and 12 even when the plist says 11.0.
-      - name: Build the universal disk image
+      # lipo, and wraps the result in a .app. -skip-dmg holds the disk image
+      # back to after the shim, which the image has to contain.
+      #
+      # MYGO_LDFLAGS passes the version the app shows in its sidebar, and
+      # -macos sets the deployment target: Go 1.27 links for macOS 13 by
+      # default, which dyld refuses to load on 11 and 12 even when the plist
+      # says 11.0.
+      - name: Build the universal app
         env:
           MYGO_LDFLAGS: "-X main.version=${{ env.TAG }} -macos 11.0"
         run: |
           go run github.com/egoist/mygo/cmd/mygo@latest build \
-            -platform darwin/universal -skip-notarize
+            -platform darwin/universal -skip-notarize -skip-dmg
+
+      # Go 1.27 imports SecTrustCopyCertificateChain, which macOS 12 added, so
+      # the app cannot start on macOS 11 without the shim. It is built here,
+      # where clang and lipo are, rather than cross-compiled.
+      - name: Add the macOS 11 shim
+        run: |
+          chmod +x tools/sectrustcompat/macos11-compat.sh
+          tools/sectrustcompat/macos11-compat.sh dist/darwin-universal/sshkeygate.app
 
       - name: Check the deployment target
-        run: go run tools/machoinfo/main.go "dist/darwin-universal/sshkeygate.app/Contents/MacOS/sshkeygate"
+        run: go run tools/machoinfo/main.go "dist/darwin-universal/sshkeygate.app/Contents/MacOS/sshkeygate.bin"
+
+      - name: Check the shim
+        run: |
+          shim=dist/darwin-universal/sshkeygate.app/Contents/Frameworks/libsectrust_compat.dylib
+          lipo -info "$shim"
+          if [ -z "$(nm -g "$shim" | grep _SecTrustCopyCertificateChain || true)" ]; then
+            echo "the shim does not export SecTrustCopyCertificateChain"
+            exit 1
+          fi
+          if [ -n "$(nm -u "$shim" | grep _SecTrustCopyCertificateChain || true)" ]; then
+            echo "the shim imports SecTrustCopyCertificateChain"
+            exit 1
+          fi
+
+      # The launcher replaces the executable, so the bundle is signed again,
+      # ad hoc: macOS refuses an unsigned bundle on Apple Silicon.
+      - name: Sign the app
+        run: |
+          app=dist/darwin-universal/sshkeygate.app
+          codesign --force --deep --sign - "$app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+
+      # A disk image of the shimmed, signed app: mygo skipped it above, since
+      # it would have held the app from before the shim.
+      - name: Build the disk image
+        run: |
+          VERSION="${TAG#v}"
+          stage=$(mktemp -d)
+          cp -R dist/darwin-universal/sshkeygate.app "$stage/"
+          ln -s /Applications "$stage/Applications"
+          hdiutil create -volname "sshkeygate" -srcfolder "$stage" \
+            -ov -format UDZO "dist/sshkeygate-${VERSION}.dmg"
+          rm -rf "$stage"
+          ls -lh "dist/sshkeygate-${VERSION}.dmg"
 
       - name: Collect
         run: |
           mkdir -p out
-          find dist -name '*.dmg' -maxdepth 3 -exec cp {} out/ \;
+          cp dist/*.dmg out/
           ls -l out
 
       - name: Upload

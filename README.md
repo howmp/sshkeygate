@@ -28,15 +28,17 @@
 | Windows x64 | `sshkeygate-<version>-windows-amd64.exe` |
 | macOS 11+（Intel + Apple Silicon） | `sshkeygate-<version>.dmg` |
 
-macOS 包目前未签名，首次打开需要「右键 → 打开」，或执行：
+macOS 包目前未签名（ad hoc 签名），首次打开需要「右键 → 打开」，或执行：
 
 ```bash
 xattr -dr com.apple.quarantine /Applications/sshkeygate.app
 ```
 
-macOS 包的最低系统版本是 **11.0（Big Sur）**：`.dmg` 里的可执行文件按 macOS 11 链接，
-`Info.plist` 的 `LSMinimumSystemVersion` 也是 11.0。MyGo 对新系统才有的 API 都做
-运行时判断，缺失时降级，因此在 11 上可以运行。
+macOS 包支持 **11.0（Big Sur）及以上**。Go 1.27 本身要求 macOS 13，
+且其 `crypto/x509` 硬引用了 macOS 12 才有的 `SecTrustCopyCertificateChain`，
+所以包里附带一个小型兼容层：`Contents/Frameworks/libsectrust_compat.dylib`
+用 macOS 11 仍可用的旧 API 实现该函数，由启动脚本注入。详见
+[tools/sectrustcompat](tools/sectrustcompat/README.md)。
 
 ## 客户端接入
 

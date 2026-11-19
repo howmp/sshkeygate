@@ -4,7 +4,9 @@
 
 - [ ] macOS 实机验证：Unix socket、`SSH_AUTH_SOCK`、Keychain 存取、`kern.procargs2` 取路径
 - [ ] macOS 上 `LOCAL_PEERPID` 对系统完整性保护（SIP）进程的失败路径，确认降级为「无法识别来源」而不是放行
-- [ ] **macOS 11.7.10（Big Sur）实机验证**：产物已按 11.0 链接，但尚未在真机跑过；重点看自动启动（13 以下走 launch agent）与托盘
+- [x] **macOS 11.7.10（Big Sur）实机验证**：兼容层已生效，应用可在 11 上启动（dyld 通过、进入解锁界面）
+- [ ] macOS 11 上从 Finder 双击启动（SSH 会话下 Keychain 拒绝交互，需桌面会话确认）
+- [ ] macOS 11 上自动启动（13 以下走 launch agent）与托盘
 - [ ] Windows：系统自带 OpenSSH Authentication Agent 服务占用 `\\.\pipe\openssh-ssh-agent` 时的提示文案与引导（停用服务或改用其它管道名）
 
 ## 加固
