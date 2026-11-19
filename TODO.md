@@ -1,55 +1,52 @@
 # sshkeygate TODO
 
-## Current hardening
+## 待验证
 
-- [x] Queue concurrent signing confirmations so requests cannot overwrite each other.
-- [x] Validate SSH Agent frame and field lengths and cap request size.
-- [x] Bind trusted programs to configurable executable attributes (path is
-      mandatory; modification time is enabled by default, SHA-256 is optional).
-- [x] Disable permanent trust when the requesting process cannot be identified.
-- [x] Capture executable modification time and SHA-256 when trusting a program.
-- [x] Make password changes recoverable if secure-storage writes are interrupted.
-- [x] Require stronger vault passwords and throttle failed unlock attempts.
-- [x] Bound the on-disk audit log, not only the in-memory list.
-- [x] Persist and honor the lock-on-screen-lock setting.
-- [x] Handle widget disposal during asynchronous password operations.
-- [x] Add regression tests for signing queues, malformed protocol messages,
-      trusted executable replacement, and interrupted password changes.
+- [ ] macOS 实机验证：Unix socket、`SSH_AUTH_SOCK`、Keychain 存取、`kern.procargs2` 取路径
+- [ ] macOS 上 `LOCAL_PEERPID` 对系统完整性保护（SIP）进程的失败路径，确认降级为「无法识别来源」而不是放行
+- [ ] Windows：系统自带 OpenSSH Authentication Agent 服务占用 `\\.\pipe\openssh-ssh-agent` 时的提示文案与引导（停用服务或改用其它管道名）
 
-## UX follow-up
+## 加固
 
-- [x] Show the Agent running/locked state and pending request count in the main UI.
-- [x] Explain once that closing the window keeps the Agent running in the tray.
-- [x] Add a Lock action to the tray menu.
-- [x] Add live Agent status/actions to the tray menu.
-- [x] Improve import scan results for encrypted and unparseable key files.
-- [x] Allow the desktop window to be resized.
-- [x] Make fixed-width tables responsive at the minimum window size.
-- [x] Normalize the remaining visible SSH terminology.
-- [ ] Add localization support.
+- [x] 并发签名请求排队，一次只展示一个（`app.Confirmer`）
+- [x] 校验 Agent 帧长度，超长帧直接断开连接（`x/crypto/ssh/agent` 内建）
+- [x] 信任程序绑定可选校验字段（路径恒需要，mtime 默认开启，SHA-256 可选）
+- [x] 无法识别来源的进程禁用自动放行
+- [x] 信任时同时记录 mtime 与 SHA-256
+- [x] 改密中断可恢复（`vault.migrate` 两阶段）
+- [x] 密码最少 12 位
+- [x] 审计日志落盘上限 500 条，不只限制内存
+- [x] 锁屏自动锁定设置持久化并生效
+- [ ] 解锁失败节流（原 Flutter 版有指数退避，Go 版尚未实现）
+- [ ] 私钥内存清零的可验证性（Go GC 会复制切片，只能尽力而为）
 
-## Cross-platform (deferred)
+## UX
 
-- [ ] Replace the Windows named pipe with a Unix-domain socket transport on
-      macOS/Linux and publish its path through `SSH_AUTH_SOCK`.
-- [ ] Obtain peer PID/UID/path through `SO_PEERCRED` on Linux and peer
-      credentials plus `proc_pidpath`/code-signing identity on macOS.
-- [ ] Move Windows DLL loading behind conditional imports before enabling a
-      non-Windows build.
-- [ ] Implement lock-state providers for macOS workspace notifications and
-      Linux systemd-logind/DBus.
-- [ ] Add macOS LaunchAgent and Linux systemd-user/autostart integrations.
-- [ ] Verify Keychain/libsecret availability and fail closed when secure
-      storage is unavailable.
-- [ ] Add `.icns`/PNG tray resources and verify menu-bar/AppIndicator behavior.
-- [ ] Centralize platform data, log, socket, and startup paths.
-- [ ] Add Windows, macOS, and Linux CI builds and integration tests.
+- [x] 侧边栏显示 Agent 状态与待处理请求数
+- [x] 关窗到托盘时说明一次
+- [x] 托盘菜单含状态、显示窗口、锁定、退出
+- [x] 导入扫描区分「新文件 / 已导入 / 加密 / 异常」
+- [ ] 界面多语言化（当前中文硬编码）
+- [ ] 密钥列表支持搜索与排序
+- [ ] 导入后自动切换到密钥列表页
 
-## Current decisions
+## 平台
 
-- Keep the vault PBKDF2 iteration count at 100,000 to avoid increasing unlock
-  and decryption latency.
-- Do not move signing into an isolate/native boundary for deterministic memory
-  erasure.
-- Keep the current Flutter and `dartssh2` versions; no dependency upgrade is
-  planned.
+- [ ] Linux：Unix socket + `SO_PEERCRED`、libsecret、systemd user 自启、logind 锁屏
+- [ ] Linux：`XDG_RUNTIME_DIR` 下的 socket 路径
+- [ ] macOS 打包与签名（`mygo build` 产出 .app 后仍需 notarize）
+
+## 功能
+
+- [ ] 支持一个文件内多把私钥
+- [ ] 支持 SSH 证书（`*-cert-v01@openssh.com`）签名
+- [ ] 密钥导出（导出为 PEM）
+- [ ] 从 `flutter_secure_storage.dat` 的一次性迁移（当前明确不做）
+- [ ] 自动更新（`mygo.Updater`）
+
+## 当前决定
+
+- 保持 PBKDF2 10 万轮，与 Flutter 版一致的解锁延迟
+- 不把签名放进独立进程做内存隔离
+- 只有 device_key 进系统凭据库，其余加密落盘（绕过 2560 字节上限）
+- Windows 管道自行实现而不依赖 go-winio，以便获取客户端进程句柄

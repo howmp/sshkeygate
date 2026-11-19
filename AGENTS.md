@@ -1,139 +1,98 @@
-# sshkeygate - Flutter 实现
+# sshkeygate — Go 实现
 
-Windows SSH Agent，支持从 Bitwarden 导入密钥。纯 Dart 实现，使用 `dartssh2` 做密钥解析/签名。
+跨平台 SSH Agent（Windows + macOS），纯 Go，无 cgo。UI 使用 MyGo 原生 `ui` 包。
 
 ## 构建 & 运行
 
 ```bash
-flutter pub get
-flutter build windows                    # 构建，产物在 build/windows/x64/runner/Release/
-flutter test                             # 单元测试
-flutter run -d windows                   # 开发运行
+# Windows：必须带 -H windowsgui，否则运行时会弹出控制台黑框
+go build -ldflags "-H windowsgui -s -w" -o dist/sshkeygate.exe .
+
+# macOS
+go build -o dist/sshkeygate .
+
+go test ./...                     # 全部测试
+go vet ./... && gofmt -l .
+GOOS=darwin GOARCH=arm64 go build ./...   # 交叉编译校验
+go run github.com/egoist/mygo/cmd/mygo@latest build   # macOS .app 打包
 ```
+
+Go 版本要求 **1.27.3+**（MyGo v0.10.0 的下限，`go.mod` 已声明）。
+
+## 图标
+
+```bash
+go run tools/genicon/main.go    # tools/genicon/source.png → app/assets/icon.png (256²) + icon.ico (16–256 共 9 尺寸)
+go run github.com/akavel/rsrc@latest -ico app/assets/icon.ico -o rsrc_windows_amd64.syso
+```
+
+- 源图 `tools/genicon/source.png` 是原版美术资源（1024²，绿色钥匙 + 环内深蓝终端提示符），**不要重画**
+- `genicon` 只做盒式缩放，按预乘 alpha 平均，避免透明边缘渗色
+- 窗口与托盘图标：`//go:embed assets/icon.png`（`app/icon.go`）；登录页与侧边栏用 `ui.Image` 绘制同一张
+- exe 图标：`rsrc_windows_amd64.syso` 编进二进制，改图标后需重新生成并 `go build`
+
 
 ## 目录结构
 
 ```
-lib/
-├── main.dart                    # 入口、窗口管理、系统托盘、服务初始化
-├── theme/app_colors.dart        # 颜色常量
-├── services/
-│   ├── secure_storage_service.dart  # 统一安全存储（PBKDF2+device_key→AES-256-GCM）
-│   ├── log_service.dart         # 日志服务（持久化到 agent.log，JSONL 格式）
-│   ├── crypto_service.dart      # Bitwarden 兼容加密（PBKDF2/Argon2id/AES-CBC/HKDF）
-│   ├── bitwarden_service.dart   # Bitwarden 客户端（prelogin→登录→sync→解密）
-│   ├── ssh_key_service.dart     # SSH 密钥解析与签名（dartssh2 驱动）
-│   ├── blowfish_constants.dart  # Blowfish S-box 常量（Bitwarden 格式兼容）
-│   ├── keystore_service.dart    # 密钥库（dartssh2 解析，私钥不驻留内存）
-│   ├── policy_service.dart      # 策略引擎（4 种策略模式 + 路径信任）
-│   ├── app_service.dart         # 服务聚合器
-│   ├── ssh_agent_service.dart   # SSH Agent（Windows: dart_ipc 命名管道）
-│   └── windows_service.dart     # Windows 平台服务（开机启动/进程路径FFI/锁屏检测）
-├── pages/
-│   ├── unlock_page.dart         # 解锁/设置密码页面
-│   ├── keys_page.dart           # 密钥列表
-│   ├── import_page.dart         # 导入密钥（文本拖拽/文件浏览/Bitwarden）
-│   ├── trusted_page.dart        # 信任程序
-│   ├── settings_page.dart       # 配置（开机启动/锁屏锁定/超时时间/修改密码）
-│   └── log_page.dart            # 操作日志
-└── widgets/
-    ├── app_sidebar.dart          # 侧边栏（5页导航 + 锁定按钮）
-    ├── app_toggle.dart           # 开关组件
-    └── confirm_dialog.dart       # SSH 签名确认弹窗（带倒计时）
+main.go                   # 单实例锁、服务装配、窗口、托盘、锁屏钩子
+app/
+  app.go                  # 服务聚合 + UI 状态 + 动作
+  views.go                # 侧边栏 + 5 页面 + 确认/改名/改密弹窗
+  confirm.go              # 签名确认队列
+  tray.go                 # 托盘菜单
+  icon.go                 # 程序生成的托盘图标
+internal/
+  vault/                  # 加密存储（PBKDF2+AES-GCM、原子写、改密回滚）
+  keystore/               # 元数据 + 按需解密签名
+  sshkey/                 # 解析/指纹/RSA flags 签名
+  agent/                  # SSH Agent 协议 + 传输 + peer 识别
+  policy/                 # 4 种策略 + 信任校验
+  auditlog/               # JSONL 日志
+  bitwarden/              # KDF + EncString + 同步
 ```
-
-## 核心依赖
-
-| 包 | 用途 |
-|---|------|
-| `dartssh2` | SSH 密钥解析（支持加密密钥）+ 签名（Ed25519/RSA/ECDSA） |
-| `dart_ipc` | Windows 命名管道（`\\.\pipe\openssh-ssh-agent`） |
-| `flutter_secure_storage` | 平台安全存储（Win: Credential Manager / macOS: Keychain / Linux: libsecret） |
-| `cryptography` | PBKDF2、AES-256-GCM |
-| `pointycastle` | RSA 签名（支持 rsa-sha2-256/512 算法选择） |
-| `system_tray` | 系统托盘（最小化到托盘/右键菜单） |
-| `file_picker` | 系统目录选择对话框 |
-| `desktop_drop` | 文件拖拽导入 |
-| `window_manager` | 窗口管理（尺寸锁定/前台激活/关闭拦截） |
-| `ffi` | FFI 调用 kernel32/user32（GetNamedPipeClientProcessId, QueryFullProcessImageNameW, OpenInputDesktop） |
 
 ## 关键设计决策
 
-1. **dartssh2 驱动**：密钥解析和签名使用 `dartssh2` 库，支持加密密钥（bcrypt-pbkdf + aes256-ctr）导入
-2. **命名管道**：Windows 上通过 `dart_ipc` 创建 `\\.\pipe\openssh-ssh-agent`，与 OpenSSH 原生兼容
-3. **密码保护的统一存储**：所有数据存储在 `flutter_secure_storage` 中（单文件），加密方案为 `AES-256-GCM(PBKDF2(用户密码 || device_key, salt, 100000轮))`
-4. **私钥不驻留内存**：vault 元数据不含私钥；每条私钥单独加密存储为 `sshkeygate_pk_{id}`，签名时按需解密单条，用完即弃
-5. **导入时解密存储**：加密密钥导入时使用 passphrase 解密，存储解密后的无密码 PEM。不存储 passphrase
-6. **基于路径的进程信任**：信任列表以可执行文件路径（不区分大小写）为键，任何策略下已信任程序均自动放行
-7. **签名确认倒计时**：确认弹窗带可配置倒计时（默认 30 秒），超时自动拒绝
-8. **系统托盘常驻**：关窗最小化到托盘而非退出，SSH Agent 始终可用
-9. **锁屏自动锁定**：FFI 调用 `OpenInputDesktop` 轮询检测桌面锁定状态
-10. **操作日志**：所有签名请求/允许/拒绝/自动放行事件持久化记录
+1. **MyGo 承担全部平台能力**：托盘 `mygo.NewTray`、开机启动 `App.SetOpenAtLogin`、锁屏 `Power.OnLockScreen`、凭据库 `Secrets`、数据目录 `App.Path(PathUserData)`、单实例 `RequestSingleInstanceLock`。这些在 Flutter 版里都需要自己写 FFI/注册表代码
+2. **`agent.ServeAgent` 负责协议**：分帧、长度上限、RSA flags 转发都由 `x/crypto/ssh/agent` 处理。我们只需为每个连接实现 `ExtendedAgent`，把 peer 身份绑进去
+3. **确认队列在 UI 侧**：agent 只投递 `*agent.Pending` 并阻塞等待，`app.Confirmer` 负责排队、一次展示一个、倒计时与记日志。签发/拒绝/信任的副作用（`policy.Grant`、`TrustProgram`、审计）都在 Confirmer 里，agent 只负责匹配密钥和签名
+4. **只有 device_key 进凭据库**：MyGo `Secrets` 单条上限 2560 字节，vault 与私钥都加密落盘，key 派生为 `PBKDF2(password‖device_key, salt, 100k)`
+5. **私钥不驻留内存**：vault 元数据不含私钥；每把私钥单独加密为 `keys/<id>.bin`，签名时解密单条后立即清零
+6. **Windows 管道自己实现**：go-winio 不导出管道句柄，而 `GetNamedPipeClientProcessId` 需要它。`internal/agent/listen_windows.go` 直接用 `x/sys/windows` 的 `CreateNamedPipe`/`ConnectNamedPipe`，同时拿到句柄做 peer 识别
+7. **macOS peer 识别**：`GetsockoptInt(fd, SOL_LOCAL, LOCAL_PEERPID)` 取 PID，再用 `SysctlRaw("kern.procargs2", pid)` 取可执行文件路径
+8. **不可识别来源永不放行**：`policy.NeedsConfirmation` 在 `path == ""` 时恒返回 true
+9. **信任记录存全量**：路径 + 修改时间 + SHA-256 都保存，设置只控制校验哪些字段
+10. **改密可回滚**：先写 `vault.migrate`（含旧盐值与旧密文），成功后才删；`Open` 时检测并恢复
 
 ## 数据存储
 
-所有数据存储在 `flutter_secure_storage` 管理的单文件中（`flutter_secure_storage.dat`），平台级 DPAPI 保护。
+| 项 | 位置 |
+|---|---|
+| 数据目录 | `App.Path(PathUserData)`：`%APPDATA%\sshkeygate` / `~/Library/Application Support/sshkeygate` |
+| `vault.json` | `{"version":1,"salt":"<b64 16B>","vault":"<b64 AES-GCM>"}` |
+| `keys/<id>.bin` | base64(AES-GCM(私钥 PEM)) |
+| `agent.log` | JSONL，≤500 行 |
+| device_key | Credential Manager / Keychain，account `device_key` |
 
-**文件位置：** `%APPDATA%\com.sshkeygate\sshkeygate\flutter_secure_storage.dat`
+**vault 明文结构**：`{keys[], trustedPaths[], trustedPrograms[], settings{}}`，**不含私钥**。
+**settings 字段**：`confirmTimeoutSeconds`(30)、`lockOnScreenLock`(true)、`closeToTrayHintShown`(false)、`trustVerification`(["path","mtime"])。
 
-**存储条目：**
-| Key | 内容 |
-|-----|------|
-| `sshkeygate_device_key` | 32 字节随机设备密钥（base64） |
-| `sshkeygate_salt` | 16 字节随机盐（base64） |
-| `sshkeygate_vault` | AES-256-GCM 加密的元数据 JSON（base64） |
-| `sshkeygate_pk_{id}` | 每条私钥单独加密（AES-256-GCM，base64） |
+## Agent 端点
 
-**加密方案：**
-```
-enc_key = PBKDF2-SHA256(用户密码 || device_key, salt, 100000轮)
-vault   = AES-GCM(JSON, enc_key)
-pk_{id} = AES-GCM(PEM明文, enc_key)
-```
+- Windows：`\\.\pipe\openssh-ssh-agent`（`ssh.exe` 默认连接）
+- macOS：`~/.sshkeygate/agent.sock`（0600），需 `export SSH_AUTH_SOCK=...`
 
-**vault JSON 结构：**
-```json
-{
-  "keys": [
-    {
-      "id": "uuid",
-      "name": "my-key",
-      "algorithm": "ssh-ed25519",
-      "fingerprint": "SHA256:...",
-      "publicKeyBlob": "<base64>",
-      "source": "manual",
-      "enabled": true
-    }
-  ],
-  "trustedPaths": ["c:\\windows\\system32\\openssh\\ssh.exe"],
-  "settings": {"confirmTimeoutSeconds": 30}
-}
-```
+## 测试约定
 
-**日志文件：** `%APPDATA%\com.sshkeygate\sshkeygate\agent.log`（JSONL 格式，最多 500 条）
-
-**内存模型：**
-- 锁定态：内存中无任何密钥数据，SSH 请求直接拒绝
-- 解锁后：内存保留元数据 + publicKeyBlob + trustedPaths + settings，**不含 privateKey**
-- 签名时：从 `sshkeygate_pk_{id}` 解密单条 → `dartssh2` 签名 → 丢弃
+- 单元测试全部不依赖凭据库/系统 UI：`vault.SecretStore` 是接口，测试用内存实现
+- `internal/agent/server_test.go` 用 `net.Pipe()` 跑协议，不需要监听端口
+- `internal/agent/listen_windows_test.go` 是真实管道集成测试：覆盖 peer PID 与路径识别、`tryPeer=false` 的降级、`Close` 能唤醒 `ConnectNamedPipe`。测试覆写 `pipePath` 变量，避免和系统 agent 抢管道
+- `app/views_test.go` 用 `ui.NewTester` 无窗口渲染，断言页面文案与弹窗
+- 测试夹具在 `internal/sshkey/testdata`（`id_ed25519`、`id_ed25519.pub`、`id_ed25519_bwagent`、`id_rsa`）
 
 ## 已知问题
 
-- **hot restart 后 SSH 卡住**：dart_ipc 管道在 hot restart 后重建，旧 SSH 连接失效。重新执行 ssh 命令即可，生产环境无此问题
-- **`flutter test` 无法测试命名管道**：dart_ipc 依赖原生插件，仅在 `flutter run` 时可用。测试使用 `forceTcp: true` + 内存 FakeSecureStorage
-
-## 测试
-
-```
-test/
-├── keystore_service_test.dart      # 密钥导入/删除/切换 + SecureStorage 加解密
-├── policy_service_test.dart        # 策略引擎（4 种策略 + 信任路径）
-├── app_service_test.dart           # 集成测试（导入/删除/信任）
-├── log_service_test.dart           # 日志服务（写入/读取/轮转/清理）
-├── openssh_rsa_test.dart           # RSA 签名验证（pointycastle）
-├── ssh_agent_protocol_test.dart    # SSH Agent 协议（TCP 模式）
-├── crypto_service_test.dart        # Bitwarden 加密兼容性
-├── bitwarden_sync_test.dart        # Bitwarden 服务器集成测试（skip）
-└── widget_test.dart                # 颜色常量验证
-# 总计: 69 passed, 1 skipped, 1 failed
-```
+- 仅 Windows/macOS；Linux 未实现
+- 不支持单文件多私钥、SSH 证书
+- 中文文案硬编码
