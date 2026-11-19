@@ -61,7 +61,13 @@ jobs:
       # MyGo needs no cgo, so every target builds from any machine.
       - name: Build every target
         run: |
+          # The macOS targets keep the deployment target the release uses.
           for target in windows/amd64 darwin/amd64 darwin/arm64; do
             echo "Building $target"
             GOOS="${target%/*}" GOARCH="${target#*/}" go build ./...
           done
+
+      - name: Check the macOS deployment target
+        run: |
+          GOOS=darwin GOARCH=amd64 go build -ldflags "-macos 11.0" -o /tmp/mac11 .
+          go run tools/machoinfo/main.go /tmp/mac11

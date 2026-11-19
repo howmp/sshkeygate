@@ -26,13 +26,17 @@
 | 平台 | 文件 |
 |------|------|
 | Windows x64 | `sshkeygate-<version>-windows-amd64.exe` |
-| macOS（Intel + Apple Silicon） | `sshkeygate-<version>.dmg` |
+| macOS 11+（Intel + Apple Silicon） | `sshkeygate-<version>.dmg` |
 
 macOS 包目前未签名，首次打开需要「右键 → 打开」，或执行：
 
 ```bash
 xattr -dr com.apple.quarantine /Applications/sshkeygate.app
 ```
+
+macOS 包的最低系统版本是 **11.0（Big Sur）**：`.dmg` 里的可执行文件按 macOS 11 链接，
+`Info.plist` 的 `LSMinimumSystemVersion` 也是 11.0。MyGo 对新系统才有的 API 都做
+运行时判断，缺失时降级，因此在 11 上可以运行。
 
 ## 客户端接入
 
@@ -70,7 +74,18 @@ macOS 的 `.app` 与 DMG 由 `mygo build` 产出，配置在 `mygo.json`：
 
 ```bash
 # 双架构 .app（arm64 + amd64 由 lipo 合并）与 DMG，需在 macOS 上执行
-go run github.com/egoist/mygo/cmd/mygo@latest build -platform darwin/universal
+MYGO_LDFLAGS="-macos 11.0" \
+  go run github.com/egoist/mygo/cmd/mygo@latest build -platform darwin/universal
+```
+
+`-macos 11.0` 不能省：Go 1.27 的链接器默认按 **macOS 13** 链接，dyld 会拒绝在
+11/12 上加载，即使 `Info.plist` 写的是 11.0。可以用 `tools/machoinfo` 核对产物：
+
+```bash
+go run tools/machoinfo/main.go \
+  dist/darwin-universal/sshkeygate.app/Contents/MacOS/sshkeygate
+# arm64   minos=11.0 sdk=26.2
+# x86_64  minos=11.0 sdk=26.2
 ```
 
 `darwin/universal` 分别编译 arm64 与 amd64 再合成，一个包同时支持 Apple Silicon 与 Intel。

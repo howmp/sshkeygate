@@ -77,13 +77,18 @@ jobs:
 
       # mygo build compiles darwin/arm64 and darwin/amd64, merges them with
       # lipo, and wraps the result in a .app and a disk image. MYGO_LDFLAGS
-      # passes the version the app shows in its sidebar.
+      # passes the version the app shows in its sidebar, and -macos sets the
+      # deployment target: Go 1.27 links for macOS 13 by default, which dyld
+      # refuses to load on 11 and 12 even when the plist says 11.0.
       - name: Build the universal disk image
         env:
-          MYGO_LDFLAGS: "-X main.version=${{ env.TAG }}"
+          MYGO_LDFLAGS: "-X main.version=${{ env.TAG }} -macos 11.0"
         run: |
           go run github.com/egoist/mygo/cmd/mygo@latest build \
             -platform darwin/universal -skip-notarize
+
+      - name: Check the deployment target
+        run: go run tools/machoinfo/main.go "dist/darwin-universal/sshkeygate.app/Contents/MacOS/sshkeygate"
 
       - name: Collect
         run: |

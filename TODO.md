@@ -4,7 +4,7 @@
 
 - [ ] macOS 实机验证：Unix socket、`SSH_AUTH_SOCK`、Keychain 存取、`kern.procargs2` 取路径
 - [ ] macOS 上 `LOCAL_PEERPID` 对系统完整性保护（SIP）进程的失败路径，确认降级为「无法识别来源」而不是放行
-- [ ] macOS 实机验证 universal 包在 Intel 与 Apple Silicon 上都能启动（交叉编译已确认双架构，见下）
+- [ ] **macOS 11.7.10（Big Sur）实机验证**：产物已按 11.0 链接，但尚未在真机跑过；重点看自动启动（13 以下走 launch agent）与托盘
 - [ ] Windows：系统自带 OpenSSH Authentication Agent 服务占用 `\\.\pipe\openssh-ssh-agent` 时的提示文案与引导（停用服务或改用其它管道名）
 
 ## 加固
@@ -44,25 +44,44 @@
 {
   "identifier": "com.sshkeygate.app",
   "icon": "app/assets/icon.png",
-  "macos": { "minimumSystemVersion": "12.0" }
+  "macos": { "minimumSystemVersion": "11.0" }
 }
 ```
 
 `darwin/universal` 由 MyGo 内建支持：它分别编译 `darwin/arm64` 与 `darwin/amd64`，
 再用 `lipo` 合成一个可执行文件，不需要手动合并。
 
+### 最低系统版本
+
+两处都要设为 11.0，缺一不可：
+
+1. `mygo.json` 的 `macos.minimumSystemVersion` → 写入 `Info.plist` 的 `LSMinimumSystemVersion`
+2. 链接参数 `-macos 11.0` → 写入 Mach-O 的 `LC_BUILD_VERSION.minos`
+
+**Go 1.27 的链接器默认 `macos = {13, 0, 0}`**（见 `cmd/link/internal/ld/macho.go`），
+所以只改 plist 仍会在 macOS 11/12 上被 dyld 拒绝，报「需要更新版本的 macOS」。
+通过 `MYGO_LDFLAGS` 把 `-macos` 传给 `mygo build`。
+`tools/machoinfo` 可核对产物：`minos=11.0` 才算对。
+
+运行时方面，MyGo 对所有 macOS 12+ 才有的 API 都用 `respondsToSelector:` 判断并降级
+（如 `DataStoreForIdentifier`、`interactionState`、`CADisplayLink`），因此 11 可用。
+macOS 13 以下的「开机启动」走 launch agent，而不是 `SMAppService`。
+
 ### 命令
 
 ```bash
 # 双架构 .app + DMG（需要 macOS 才能产出 DMG 并签名）
-go run github.com/egoist/mygo/cmd/mygo@latest build -platform darwin/universal
+# MYGO_LDFLAGS 里的 -macos 不能省，否则 minos 是 13.0
+MYGO_LDFLAGS="-macos 11.0" \
+  go run github.com/egoist/mygo/cmd/mygo@latest build -platform darwin/universal
 
 # 只出 .app，跳过 DMG
-go run github.com/egoist/mygo/cmd/mygo@latest build -platform darwin/universal -skip-dmg
+MYGO_LDFLAGS="-macos 11.0" \
+  go run github.com/egoist/mygo/cmd/mygo@latest build -platform darwin/universal -skip-dmg
 
 # 单独出一个架构（体积更小）
-go run github.com/egoist/mygo/cmd/mygo@latest build -platform darwin/arm64
-go run github.com/egoist/mygo/cmd/mygo@latest build -platform darwin/amd64
+MYGO_LDFLAGS="-macos 11.0" \
+  go run github.com/egoist/mygo/cmd/mygo@latest build -platform darwin/arm64
 ```
 
 ### 签名与公证（需在 macOS 上，且有 Apple Developer 账号）
@@ -104,4 +123,4 @@ go run github.com/egoist/mygo/cmd/mygo@latest build -platform darwin/amd64
 - 不把签名放进独立进程做内存隔离
 - 只有 device_key 进系统凭据库，其余加密落盘（绕过 2560 字节上限）
 - Windows 管道自行实现而不依赖 go-winio，以便获取客户端进程句柄
-- macOS 最低版本 12.0（Monterey），覆盖 Intel 与 Apple Silicon
+- macOS 最低版本 11.0（Big Sur）：`Info.plist` 与 `-macos` 两处都要设，覆盖 Intel 与 Apple Silicon

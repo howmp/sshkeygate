@@ -9,9 +9,6 @@
   "main": ".",
   "out": "dist",
   "macos": {
-    "minimumSystemVersion": "12.0",
-    "infoPlist": {
-      "LSUIElement": false
-    }
+    "minimumSystemVersion": "11.0"
   }
 }
