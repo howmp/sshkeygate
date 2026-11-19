@@ -16,7 +16,10 @@ permissions:
   contents: write
 
 env:
-  VERSION: ${{ github.event.inputs.tag || github.ref_name }}
+  # TAG names the release and its tag, such as v0.3.0. VERSION is the same
+  # number without the v, which is how mygo names its disk image; each job
+  # derives it with "${TAG#v}", because expressions cannot strip a prefix.
+  TAG: ${{ github.event.inputs.tag || github.ref_name }}
 
 jobs:
   windows:
@@ -43,8 +46,9 @@ jobs:
       - name: Build
         shell: bash
         run: |
+          VERSION="${TAG#v}"
           # -H windowsgui keeps the console window from appearing.
-          go build -trimpath -ldflags "-H windowsgui -s -w -X main.version=${VERSION}" \
+          go build -trimpath -ldflags "-H windowsgui -s -w -X main.version=v${VERSION}" \
             -o "sshkeygate-${VERSION}-windows-amd64.exe" .
           ls -l *.exe
 
@@ -76,7 +80,7 @@ jobs:
       # passes the version the app shows in its sidebar.
       - name: Build the universal disk image
         env:
-          MYGO_LDFLAGS: "-X main.version=${{ env.VERSION }}"
+          MYGO_LDFLAGS: "-X main.version=${{ env.TAG }}"
         run: |
           go run github.com/egoist/mygo/cmd/mygo@latest build \
             -platform darwin/universal -skip-notarize
@@ -124,12 +128,12 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # workflow_dispatch runs on a branch, so the tag may need creating.
-          if ! git rev-parse "$VERSION" >/dev/null 2>&1; then
-            git tag "$VERSION"
-            git push origin "$VERSION"
+          if ! git rev-parse "$TAG" >/dev/null 2>&1; then
+            git tag "$TAG"
+            git push origin "$TAG"
           fi
 
-          gh release create "$VERSION" assets/* \
-            --title "$VERSION" \
+          gh release create "$TAG" assets/* \
+            --title "$TAG" \
             --generate-notes \
             --verify-tag
