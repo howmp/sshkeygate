@@ -66,9 +66,11 @@ type App struct {
 	tray     *mygo.Tray
 	trayOnce sync.Once
 
-	// mu guards running, which the listener sets off the main thread.
-	mu      sync.Mutex
-	running bool
+	// mu guards running, which the listener sets off the main thread, and
+	// dockPolicy, which the Dock verbs set.
+	mu         sync.Mutex
+	running    bool
+	dockPolicy dockPolicy
 
 	// systemDark and systemLocale cache what MyGo reports about the desktop,
 	// read once the app is ready. Views must not ask MyGo for them: a view
@@ -173,7 +175,8 @@ func (a *App) Quit() {
 // KeepWindowOpen makes closing the window hide it, keeping the agent up.
 //
 // The first time, the window stays open and explains what happened; the
-// explanation is shown once.
+// explanation is shown once. On macOS the app also leaves the Dock, since
+// nothing of it is on screen but the menu bar icon.
 func (a *App) KeepWindowOpen(win *mygo.Window) {
 	win.OnClose(func(e *mygo.CloseEvent) {
 		switch a.CloseRequested() {
@@ -183,6 +186,7 @@ func (a *App) KeepWindowOpen(win *mygo.Window) {
 		case CloseHide:
 			e.PreventDefault()
 			win.Hide()
+			a.hideFromDock()
 		case CloseExplain:
 			e.PreventDefault()
 			a.trayHint = true
@@ -222,6 +226,9 @@ func (a *App) ShowWindow() {
 		if a.win == nil {
 			return
 		}
+		// The app comes back to the Dock before the window shows, so the
+		// icon is there while the window opens.
+		a.showInDock()
 		// Restore unconditionally: asking first is unreliable when the window
 		// was minimized from outside the app.
 		a.win.Restore()

@@ -16,6 +16,7 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"math"
 	"os"
 	"path/filepath"
 )
@@ -24,8 +25,13 @@ const (
 	sourcePath = "tools/genicon/source.png"
 	pngOutput  = "app/assets/icon.png"
 	icoOutput  = "app/assets/icon.ico"
+	// trayOutput is the macOS menu bar icon: the same artwork as one colour,
+	// which the system tints for the light or dark menu bar.
+	trayOutput = "app/assets/tray.png"
 	// pngSize is the size embedded for the window and tray.
 	pngSize = 256
+	// traySize is the size the menu bar asks for, at 2x for Retina.
+	traySize = 44
 )
 
 // icoSizes are written into the .ico, smallest first.
@@ -44,6 +50,13 @@ func main() {
 		fail(err)
 	}
 
+	// The menu bar icon is the key alone in one colour, its background
+	// dropped: macOS tints a template image to match the menu bar, so a
+	// drawn background would come out as a filled square.
+	if err := writePNG(trayOutput, trayTemplate(scale(src, traySize))); err != nil {
+		fail(err)
+	}
+
 	var images [][]byte
 	for _, size := range icoSizes {
 		var buf bytes.Buffer
@@ -55,7 +68,51 @@ func main() {
 	if err := os.WriteFile(icoOutput, buildICO(icoSizes, images), 0o644); err != nil {
 		fail(err)
 	}
-	fmt.Printf("wrote %s (%dpx) and %s (%d sizes)\n", pngOutput, pngSize, icoOutput, len(icoSizes))
+	fmt.Printf("wrote %s (%dpx), %s (%dpx) and %s (%d sizes)\n",
+		pngOutput, pngSize, trayOutput, traySize, icoOutput, len(icoSizes))
+}
+
+// trayTemplate turns the app icon into a template image for the macOS menu
+// bar: the key alone, in one colour, with transparency elsewhere.
+//
+// A template image is masked by its alpha channel and tinted by the system.
+// The mark is found by its colour - the ring is green and the prompt navy,
+// the background and the space inside the ring near-white - and the holes the
+// outline encloses stay transparent, so the icon reads at menu bar size.
+func trayTemplate(src image.Image) image.Image {
+	b := src.Bounds()
+	w, h := b.Dx(), b.Dy()
+
+	// The artwork is drawn on a pale rounded square, about #F4FAFB, opaque
+	// rather than transparent, so the mark is separated by its colour: the
+	// green ring and the navy prompt are far from it in the RGB cube, and
+	// the pale space inside the ring is the same colour as the background.
+	mark := func(x, y int) bool {
+		c := color.NRGBAModel.Convert(src.At(b.Min.X+x, b.Min.Y+y)).(color.NRGBA)
+		if c.A == 0 {
+			return false
+		}
+		// How far the pixel is from the background, as a fraction of the
+		// largest distance the cube allows. Antialiasing blends towards it,
+		// so the threshold sits above the fringe.
+		dr := float64(c.R) - 0xF4
+		dg := float64(c.G) - 0xFA
+		db := float64(c.B) - 0xFB
+		dist := math.Sqrt(dr*dr+dg*dg+db*db) / (255 * math.Sqrt(3))
+		return dist > 0.22
+	}
+
+	// Solid black with the mark's alpha: the system replaces the colour, so
+	// only the shape matters.
+	out := image.NewNRGBA(image.Rect(0, 0, w, h))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			if mark(x, y) {
+				out.SetNRGBA(x, y, color.NRGBA{R: 0, G: 0, B: 0, A: 255})
+			}
+		}
+	}
+	return out
 }
 
 func loadPNG(path string) (image.Image, error) {

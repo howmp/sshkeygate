@@ -94,6 +94,9 @@ func main() {
 			log.Printf("托盘创建失败（继续运行）: %v", err)
 		}
 		application.AttachWindow(win, tray)
+		// A click on the Dock icon reopens the window once it was closed,
+		// and a second launch brings it forward.
+		application.WatchDockClick()
 
 		ln, err := agent.Listen(srv)
 		if err != nil {
