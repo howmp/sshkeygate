@@ -29,8 +29,17 @@ go run github.com/akavel/rsrc@latest -ico app/assets/icon.ico -o rsrc_windows_am
 - 源图 `tools/genicon/source.png` 是原版美术资源（1024²，绿色钥匙 + 环内深蓝终端提示符），**不要重画**
 - `genicon` 只做盒式缩放，按预乘 alpha 平均，避免透明边缘渗色
 - 窗口与托盘图标：`//go:embed assets/icon.png`（`app/icon.go`）；登录页与侧边栏用 `ui.Image` 绘制同一张
-- exe 图标：`rsrc_windows_amd64.syso` 编进二进制，改图标后需重新生成并 `go build`
+- exe 图标：`rsrc_windows_amd64.syso` 编进二进制，**随仓库提交**（18KB，只有图标变化时才变）；改图标后 `go generate ./...` 重新生成
 
+
+## 主题与语言
+
+- `app/theme.go`：`Palette` 定义全部颜色，`Light()` / `Dark()` 两套；`themeFrom` 把配色套到 `ui.Theme`，内置控件（输入框、开关、滑块、分段控件）随之变色
+- `app/i18n.go`：`messages` 表按 key 存中英两份，`a.t` / `a.tf` 取词
+- 两者默认都是 `system`：主题取 `mygo.Theme.IsDark()`，语言取 `mygo.App.Locale()`
+- **语言必须先在 `main` 里 `mygo.App.SetLanguages("zh", "en")`**，否则 MyGo 只有英文目录，`Locale()` 永远返回 `en`
+- 系统值缓存在 `App.systemDark` / `systemLocale`，由 `Theme.OnUpdated`、`App.OnLocaleChanged` 更新；视图里**不要直接调 MyGo**，否则无窗口的 `ui.NewTester` 测试会阻塞在没有事件循环的 `onMain` 上
+- `App.appReady` 为 true 前不调用 `Theme.SetSource` 等需要事件循环的 API
 
 ## 目录结构
 
@@ -39,6 +48,9 @@ main.go                   # 单实例锁、服务装配、窗口、托盘、锁�
 app/
   app.go                  # 服务聚合 + UI 状态 + 动作
   views.go                # 侧边栏 + 5 页面 + 确认/改名/改密弹窗
+  theme.go                # 浅色/深色配色 + MyGo 主题
+  i18n.go                 # 中英文案表
+  icons.go                # 侧边栏线性图标（Painter 绘制）
   confirm.go              # 签名确认队列
   tray.go                 # 托盘菜单
   icon.go                 # 程序生成的托盘图标
@@ -64,6 +76,7 @@ internal/
 8. **不可识别来源永不放行**：`policy.NeedsConfirmation` 在 `path == ""` 时恒返回 true
 9. **信任记录存全量**：路径 + 修改时间 + SHA-256 都保存，设置只控制校验哪些字段
 10. **改密可回滚**：先写 `vault.migrate`（含旧盐值与旧密文），成功后才删；`Open` 时检测并恢复
+11. **单实例**：`RequestSingleInstanceLock` 的命名取自 `App.SetName`，所以先设名字再取锁；后启动的实例被转发参数后直接退出，首个实例在 `OnSecondInstance` 里 `ShowWindow()`（无条件 `Restore` + `Show` + `Focus`，因为外部最小化时 `IsMinimized()` 不可靠）
 
 ## 数据存储
 

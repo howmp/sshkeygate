@@ -60,6 +60,10 @@ func newTestApp(t *testing.T, createVault bool) *App {
 		}
 		a.loadSettingsIntoView()
 	}
+	// The tests assert the Chinese strings, so pin the language after the
+	// stored settings have been applied; the system locale is not available
+	// without the app's event loop.
+	a.language = LangChinese
 	return a
 }
 

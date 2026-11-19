@@ -1,3 +1,5 @@
+//go:generate go run github.com/akavel/rsrc@latest -ico app/assets/icon.ico -o rsrc_windows_amd64.syso
+
 package main
 
 import (
@@ -17,14 +19,18 @@ import (
 )
 
 func main() {
+	// Identify the app before taking the single-instance lock: the lock is
+	// named after the app.
+	mygo.App.SetName("sshkeygate")
+	mygo.App.SetVersion("0.3.0")
+	// Declare the interface languages, so the app follows the user's preferred
+	// one instead of falling back to MyGo's English-only default.
+	mygo.App.SetLanguages("zh", "en")
+
+	// A second launch hands its command line to the first instance and exits.
 	if !mygo.App.RequestSingleInstanceLock() {
 		return
 	}
-	mygo.App.SetName("sshkeygate")
-	mygo.App.SetVersion("0.3.0")
-	// The palette is a light design, so the app does not follow a dark
-	// desktop into a dark theme.
-	mygo.Theme.SetSource(mygo.ThemeLight)
 
 	dataDir, err := mygo.App.Path(mygo.PathUserData)
 	if err != nil {
@@ -49,20 +55,26 @@ func main() {
 	application := app.New(v, keys, pol, logSvc, srv, conf, dataDir)
 	conf.SetTimeout(application.ConfirmTimeout)
 
+	// A later launch exits and asks the running instance to come forward.
+	mygo.App.OnSecondInstance(func([]string, string) {
+		application.ShowWindow()
+	})
+
 	var listener interface {
 		AcceptLoop(bool)
 		Close() error
 	}
 
 	mygo.App.WhenReady(func() {
-		// The app starts locked, so the window starts as the unlock form;
+		// The app starts locked, so the window starts as the unlock card;
 		// AttachWindow resizes it to the main size once unlocked.
+		startWidth, startHeight := application.LockedSize()
 		win := mygo.NewWindow(mygo.WindowOptions{
 			Title:         "sshkeygate",
-			Width:         app.LockedWidth,
-			Height:        app.LockedHeight,
-			MinWidth:      app.LockedWidth,
-			MinHeight:     app.LockedHeight,
+			Width:         startWidth,
+			Height:        startHeight,
+			MinWidth:      startWidth,
+			MinHeight:     startHeight,
 			DisableResize: true,
 			Content:       ui.View(application.View),
 		})
@@ -77,7 +89,7 @@ func main() {
 
 		ln, err := agent.Listen(srv)
 		if err != nil {
-			application.SetStatus("Agent 启动失败：" + err.Error())
+			application.SetStatusf("err.agentFailed", err.Error())
 		} else {
 			listener = ln
 			go func() {

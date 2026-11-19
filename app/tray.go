@@ -1,12 +1,11 @@
 package app
 
 import (
-	"strconv"
-
 	"github.com/egoist/mygo"
 )
 
-// refreshTray rebuilds the tray menu to match the current state.
+// refreshTray rebuilds the tray menu to match the current state. It must run
+// on the main thread, because the labels follow the interface language.
 func (a *App) refreshTray() {
 	if a.tray == nil {
 		return
@@ -17,33 +16,30 @@ func (a *App) refreshTray() {
 	items := []*mygo.MenuItem{
 		{
 			ID:       "status-agent",
-			Label:    "Agent：" + triState(a.AgentRunning(), "运行中", "已停止"),
+			Label:    a.tf("tray.agent", a.agentStateLabel()),
 			Disabled: true,
 		},
 		{
 			ID:       "status-vault",
-			Label:    "密钥库：" + triState(!locked, "已解锁", "已锁定"),
+			Label:    a.tf("tray.vault", a.vaultStateLabel(locked)),
 			Disabled: true,
 		},
 		{
 			ID:       "status-pending",
-			Label:    "待处理签名：" + strconv.Itoa(pending),
+			Label:    a.tf("tray.pending", pending),
 			Disabled: true,
 		},
 		mygo.Separator(),
 		{
 			ID:    "show",
-			Label: "显示主窗口",
+			Label: a.t("tray.show"),
 			Click: func(*mygo.MenuItem, *mygo.Window) {
-				if a.win != nil {
-					a.win.Show()
-					a.win.Focus()
-				}
+				a.ShowWindow()
 			},
 		},
 		{
 			ID:       "lock",
-			Label:    "锁定密钥库",
+			Label:    a.t("tray.lock"),
 			Disabled: locked,
 			Click: func(*mygo.MenuItem, *mygo.Window) {
 				a.Lock()
@@ -52,19 +48,27 @@ func (a *App) refreshTray() {
 		mygo.Separator(),
 		{
 			ID:    "quit",
-			Label: "退出",
+			Label: a.t("tray.quit"),
 			Click: func(*mygo.MenuItem, *mygo.Window) {
-				mygo.App.Quit()
+				a.Quit()
 			},
 		},
 	}
 	a.tray.SetMenu(mygo.NewMenu(items))
 }
 
-// triState picks one of two labels.
-func triState(cond bool, yes, no string) string {
-	if cond {
-		return yes
+// agentStateLabel names whether the agent is listening.
+func (a *App) agentStateLabel() string {
+	if a.AgentRunning() {
+		return a.t("tray.running")
 	}
-	return no
+	return a.t("tray.stopped")
+}
+
+// vaultStateLabel names whether the vault is open.
+func (a *App) vaultStateLabel(locked bool) string {
+	if locked {
+		return a.t("tray.locked")
+	}
+	return a.t("tray.unlocked")
 }

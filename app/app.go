@@ -4,7 +4,6 @@ package app
 
 import (
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -69,6 +68,24 @@ type App struct {
 	mu      sync.Mutex
 	running bool
 
+	// systemDark and systemLocale cache what MyGo reports about the desktop,
+	// read once the app is ready. Views must not ask MyGo for them: a view
+	// also runs in tests, where the app's event loop does not exist.
+	systemDark   bool
+	systemLocale string
+	// appReady is true once the window exists, so calls into MyGo that need
+	// its event loop are only made then.
+	appReady bool
+	// quitting is set before asking MyGo to quit, so the close handler lets
+	// the window close instead of hiding it.
+	quitting bool
+	// promptActive is true while a signing prompt is on screen, and
+	// promptHidden remembers whether the window was in the tray before it.
+	promptActive bool
+	promptHidden bool
+	// toast shows a message over the window once it exists.
+	toast func(string)
+
 	// UI state, main thread only.
 	page       string
 	status     string
@@ -103,6 +120,8 @@ type App struct {
 	trustMtime       bool
 	trustSha256      bool
 	autoStart        bool
+	themeMode        string
+	language         string
 
 	// confirmOpen mirrors whether the signature prompt is on screen.
 	confirmOpen bool
@@ -113,22 +132,60 @@ type App struct {
 	trustList *ui.ListState
 }
 
+// CloseAction is what a close request should do.
+type CloseAction int
+
+// The answers to a close request.
+const (
+	// CloseQuit lets the window close, so the app can exit.
+	CloseQuit CloseAction = iota
+	// CloseExplain keeps the window open and shows the tray explanation.
+	CloseExplain
+	// CloseHide hides the window and leaves the agent running.
+	CloseHide
+)
+
+// CloseRequested decides what a window close means.
+//
+// Quitting has to win over the close-to-tray behaviour, or Quit would be
+// cancelled by its own window closing.
+func (a *App) CloseRequested() CloseAction {
+	if a.quitting {
+		return CloseQuit
+	}
+	if !a.Vault.Settings().CloseToTrayHintShown {
+		return CloseExplain
+	}
+	return CloseHide
+}
+
+// Quit exits the app, closing the window for real.
+func (a *App) Quit() {
+	a.quitting = true
+	mygo.App.Quit()
+}
+
 // KeepWindowOpen makes closing the window hide it, keeping the agent up.
 //
 // The first time, the window stays open and explains what happened; the
 // explanation is shown once.
 func (a *App) KeepWindowOpen(win *mygo.Window) {
 	win.OnClose(func(e *mygo.CloseEvent) {
-		e.PreventDefault()
-		if a.Vault.Settings().CloseToTrayHintShown {
-			win.Hide()
+		switch a.CloseRequested() {
+		case CloseQuit:
+			// Let the window close so the app can exit.
 			return
+		case CloseHide:
+			e.PreventDefault()
+			win.Hide()
+		case CloseExplain:
+			e.PreventDefault()
+			a.trayHint = true
+			if err := a.Vault.UpdateSettings(shownHintSettings(a.Vault.Settings())); err != nil {
+				a.status = a.tf("err.saveSettings", err.Error())
+			}
+			win.Invalidate()
 		}
-		a.trayHint = true
-		if err := a.Vault.UpdateSettings(shownHintSettings(a.Vault.Settings())); err != nil {
-			a.status = "保存设置失败：" + err.Error()
-		}
-		win.Invalidate()
 	})
 }
 
@@ -143,6 +200,32 @@ func (a *App) SetStatus(msg string) {
 	mygo.RunOnMain(func() { a.setStatus(msg) })
 }
 
+// SetStatusf updates the status line with a translated, formatted message.
+func (a *App) SetStatusf(key string, args ...any) {
+	mygo.RunOnMain(func() { a.setStatus(a.tf(key, args...)) })
+}
+
+// ShowWindow brings the window to the front, restoring it when minimized and
+// re-showing it after it was hidden to the tray.
+//
+// It is safe from any goroutine; launching the app again calls it.
+func (a *App) ShowWindow() {
+	if !a.appReady {
+		return
+	}
+	mygo.RunOnMain(func() {
+		if a.win == nil {
+			return
+		}
+		// Restore unconditionally: asking first is unreliable when the window
+		// was minimized from outside the app.
+		a.win.Restore()
+		a.win.Show()
+		a.win.Focus()
+		a.notify()
+	})
+}
+
 // LockOnScreenLock reports whether locking should lock the vault.
 func (a *App) LockOnScreenLock() bool { return a.Vault.Settings().LockOnScreenLock }
 
@@ -152,7 +235,10 @@ func defaultScanDir() string { return agent.DefaultScanDir() }
 // New returns an App over the given services.
 func New(v *vault.Vault, keys *keystore.Store, pol *policy.Engine, log *auditlog.Log,
 	srv *agent.Server, conf *Confirmer, dataDir string) *App {
-	return &App{
+	// Start with the appearance saved for the unlock screen: the vault that
+	// holds it is still locked at this point.
+	saved := loadPrefs(dataDir)
+	a := &App{
 		Vault:     v,
 		Keys:      keys,
 		Policy:    pol,
@@ -166,25 +252,78 @@ func New(v *vault.Vault, keys *keystore.Store, pol *policy.Engine, log *auditlog
 		fileList:  &ui.ListState{},
 		trustList: &ui.ListState{},
 		scanDir:   defaultScanDir(),
+		themeMode: saved.Theme,
+		language:  saved.Language,
 	}
+	a.loadAppearanceControls()
+	return a
 }
 
 // AttachWindow records the window, so background work can redraw it.
 func (a *App) AttachWindow(w *mygo.Window, t *mygo.Tray) {
 	a.win = w
 	a.tray = t
+	a.appReady = true
+	a.toast = nil
 	a.autoStart = mygo.App.OpenAtLogin()
+	a.systemDark = mygo.Theme.IsDark()
+	a.systemLocale = mygo.App.Locale()
+	mygo.Theme.OnUpdated(func() {
+		a.systemDark = mygo.Theme.IsDark()
+		a.notify()
+	})
+	mygo.App.OnLocaleChanged(func(locale string) {
+		a.systemLocale = locale
+		a.notify()
+	})
+	a.applyTheme()
 	a.applyWindowSize()
-	a.Confirm.SetWake(func() {
+	a.Confirm.SetWake(a.raiseForPrompt)
+	a.refreshTray()
+}
+
+// raiseForPrompt brings the window forward for a signing request.
+//
+// The window is raised above other windows while the prompt is up, so a
+// request is never hidden behind the program that asked for it.
+func (a *App) raiseForPrompt() {
+	mygo.RunOnMain(func() {
+		if a.win == nil {
+			return
+		}
+		if !a.promptActive {
+			a.promptHidden = !a.win.IsVisible()
+			a.promptActive = true
+		}
+		a.win.SetAlwaysOnTop(true)
+		a.win.Restore()
+		a.win.Show()
+		a.win.Focus()
+		a.win.Invalidate()
+	})
+	// Drop the always-on-top state once the window is up, so it does not stay
+	// pinned over everything.
+	go func() {
+		time.Sleep(400 * time.Millisecond)
 		mygo.RunOnMain(func() {
 			if a.win != nil {
-				a.win.Show()
-				a.win.Focus()
-				a.win.Invalidate()
+				a.win.SetAlwaysOnTop(false)
 			}
 		})
-	})
-	a.refreshTray()
+	}()
+}
+
+// dropPromptWindow returns the window to where it was before a prompt.
+func (a *App) dropPromptWindow() {
+	if !a.promptActive {
+		return
+	}
+	a.promptActive = false
+	hidden := a.promptHidden
+	a.promptHidden = false
+	if hidden && a.win != nil {
+		a.win.Hide()
+	}
 }
 
 // notify redraws the window. It must be called on the main thread.
@@ -194,9 +333,16 @@ func (a *App) notify() {
 	}
 }
 
-// setStatus updates the status line shown at the bottom of every page.
+// setStatus shows a message as a toast over the window. The text is also
+// kept in status, for the tray and for tests.
+//
+// A toast is used rather than a line under the page: it does not take part
+// in the layout, and it goes away by itself.
 func (a *App) setStatus(msg string) {
 	a.status = msg
+	if a.toast != nil {
+		a.toast(msg)
+	}
 	a.notify()
 }
 
@@ -227,34 +373,34 @@ func (a *App) SubmitUnlock() {
 		return
 	}
 	if len([]rune(a.password)) < MinPasswordLength {
-		a.unlockErr = fmt.Sprintf("密码至少 %d 个字符", MinPasswordLength)
+		a.unlockErr = a.tf("err.minPassword", MinPasswordLength)
 		a.notify()
 		return
 	}
 	if a.password != a.password2 {
-		a.unlockErr = "两次输入的密码不一致"
+		a.unlockErr = a.t("err.mismatch")
 		a.notify()
 		return
 	}
-	a.runBusy("正在创建密钥库…", func() error {
+	a.runBusy(a.t("status.creating"), func() error {
 		if err := a.Vault.Create(a.password); err != nil {
 			return err
 		}
 		return a.Keys.Load()
 	}, func(err error) {
 		if err != nil {
-			a.unlockErr = "创建失败：" + err.Error()
+			a.unlockErr = a.tf("err.createFailed", err.Error())
 			return
 		}
 		a.password, a.password2, a.unlockErr = "", "", ""
 		a.loadSettingsIntoView()
-		a.status = "已创建并解锁"
+		a.status = a.t("status.created")
 		a.applyWindowSize()
 	})
 }
 
 func (a *App) unlock() {
-	a.runBusy("正在解锁…", func() error {
+	a.runBusy(a.t("status.unlocking"), func() error {
 		if err := a.Vault.Unlock(a.password); err != nil {
 			return err
 		}
@@ -262,7 +408,7 @@ func (a *App) unlock() {
 	}, func(err error) {
 		if err != nil {
 			if errors.Is(err, vault.ErrWrongPassword) {
-				a.unlockErr = "密码错误"
+				a.unlockErr = a.t("err.wrongPassword")
 			} else {
 				a.unlockErr = err.Error()
 			}
@@ -270,7 +416,7 @@ func (a *App) unlock() {
 		}
 		a.password, a.unlockErr = "", ""
 		a.loadSettingsIntoView()
-		a.status = "已解锁"
+		a.status = a.t("status.unlocked")
 		a.applyWindowSize()
 	})
 }
@@ -278,10 +424,12 @@ func (a *App) unlock() {
 // Lock closes the vault and denies everything still pending.
 func (a *App) Lock() {
 	a.Confirm.RejectAll()
+	a.confirmOpen = false
+	a.dropPromptWindow()
 	a.Vault.Lock()
 	a.Keys.Clear()
 	a.Policy.ResetSession()
-	a.status = "已锁定"
+	a.status = a.t("status.locked")
 	a.applyWindowSize()
 	a.refreshTray()
 	a.notify()
@@ -309,17 +457,17 @@ func (a *App) runBusy(label string, work func() error, done func(error)) {
 // DeleteKey removes a key.
 func (a *App) DeleteKey(id string) {
 	if err := a.Keys.Delete(id); err != nil {
-		a.setStatus("删除失败：" + err.Error())
+		a.setStatus(a.tf("err.deleteFailed", err.Error()))
 		return
 	}
-	a.setStatus("已删除密钥")
+	a.setStatus(a.t("status.deleted"))
 	a.refreshTray()
 }
 
 // ToggleKey enables or disables a key.
 func (a *App) ToggleKey(id string) {
 	if err := a.Keys.Toggle(id); err != nil {
-		a.setStatus("操作失败：" + err.Error())
+		a.setStatus(a.tf("err.opFailed", err.Error()))
 		return
 	}
 	a.notify()
@@ -334,9 +482,9 @@ func (a *App) RenameKey() {
 		return
 	}
 	if err := a.Keys.Rename(a.renameID, name); err != nil {
-		a.setStatus("重命名失败：" + err.Error())
+		a.setStatus(a.tf("err.renameFailed", err.Error()))
 	} else {
-		a.setStatus("已重命名")
+		a.setStatus(a.t("status.renamed"))
 	}
 	a.showRename = false
 	a.notify()
@@ -345,7 +493,7 @@ func (a *App) RenameKey() {
 // CopyPublicKey puts a key's public line on the clipboard.
 func (a *App) CopyPublicKey(k keystore.Key) {
 	mygo.Clipboard.WriteText(a.Keys.PublicKeyLine(k))
-	a.setStatus("公钥已复制")
+	a.setStatus(a.t("status.copied"))
 }
 
 // ── Import ──────────────────────────────────────────────────────────────
@@ -356,14 +504,14 @@ func (a *App) ImportText() {
 	name := strings.TrimSpace(a.textName)
 	pass := strings.TrimSpace(a.textPass)
 	if strings.TrimSpace(text) == "" {
-		a.setStatus("请粘贴私钥文本")
+		a.setStatus(a.t("err.pasteKey"))
 		return
 	}
 	if !strings.Contains(text, "PRIVATE KEY") {
-		a.setStatus("导入失败：私钥文本格式无效")
+		a.setStatus(a.t("err.badKeyText"))
 		return
 	}
-	a.runBusy("正在导入…", func() error {
+	a.runBusy(a.t("status.importing"), func() error {
 		_, dup, err := a.Keys.Import([]byte(text), name, pass, keystore.SourceManual)
 		if err != nil {
 			return err
@@ -375,27 +523,32 @@ func (a *App) ImportText() {
 	}, func(err error) {
 		switch {
 		case errors.Is(err, errAlreadyImported):
-			a.setStatus("该密钥已存在")
+			a.setStatus(a.t("status.duplicate"))
 		case err != nil:
-			a.setStatus("导入失败：" + err.Error())
+			a.setStatus(a.tf("err.importFailed", err.Error()))
 		default:
 			a.textKey, a.textName, a.textPass = "", "", ""
-			a.setStatus("导入成功")
+			a.setStatus(a.t("status.imported"))
 		}
 	})
 }
 
-var errAlreadyImported = errors.New("密钥已存在")
+var errAlreadyImported = errors.New("key already imported")
 
 // ScanDirectory lists the private keys found in the scan directory.
 func (a *App) ScanDirectory() {
 	dir := strings.TrimSpace(a.scanDir)
 	if dir == "" {
-		a.setStatus("请填写目录")
+		a.setStatus(a.t("err.noDir"))
 		return
 	}
-	a.runBusy("正在扫描…", func() error {
-		files, err := scanKeys(dir, a.Keys.Keys())
+	labels := scanLabels{
+		unreadable: a.t("import.statusError"),
+		encrypted:  a.t("import.statusEncrypted"),
+		unparsed:   a.t("import.statusUnparsed"),
+	}
+	a.runBusy(a.t("status.scanning"), func() error {
+		files, err := scanKeys(dir, a.Keys.Keys(), labels)
 		if err != nil {
 			return err
 		}
@@ -406,7 +559,7 @@ func (a *App) ScanDirectory() {
 		return nil
 	}, func(err error) {
 		if err != nil {
-			a.setStatus("扫描失败：" + err.Error())
+			a.setStatus(a.tf("err.scanFailed", err.Error()))
 			return
 		}
 		encrypted, broken := 0, 0
@@ -418,18 +571,19 @@ func (a *App) ScanDirectory() {
 				broken++
 			}
 		}
-		a.setStatus(fmt.Sprintf("扫描完成：共 %d 个，加密 %d，异常 %d",
-			len(a.scanFiles), encrypted, broken))
+		a.setStatus(a.tf("status.scanDone", len(a.scanFiles), encrypted, broken))
 	})
 }
 
 // BrowseDirectory asks the system for a directory.
 func (a *App) BrowseDirectory() {
+	title := a.t("import.pickDir")
+	initial := a.scanDir
 	go func() {
 		paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{
-			Title:       "选择 SSH 密钥目录",
+			Title:       title,
 			Directory:   true,
-			DefaultPath: a.scanDir,
+			DefaultPath: initial,
 		})
 		if err != nil || len(paths) == 0 {
 			return
@@ -455,10 +609,10 @@ func (a *App) ImportSelected() {
 		}
 	}
 	if len(jobs) == 0 {
-		a.setStatus("没有可导入的选中文件")
+		a.setStatus(a.t("status.noSelection"))
 		return
 	}
-	a.runBusy("正在导入…", func() error {
+	a.runBusy(a.t("status.importing"), func() error {
 		ok, failed := 0, 0
 		for _, j := range jobs {
 			raw, err := os.ReadFile(j.path)
@@ -473,7 +627,7 @@ func (a *App) ImportSelected() {
 			ok++
 		}
 		mygo.RunOnMain(func() {
-			a.status = fmt.Sprintf("导入完成：成功 %d，失败 %d", ok, failed)
+			a.status = a.tf("status.importDone", ok, failed)
 		})
 		return nil
 	}, func(error) { a.ScanDirectory() })
@@ -485,10 +639,10 @@ func (a *App) SyncBitwarden() {
 	email := strings.TrimSpace(a.bwEmail)
 	pass := a.bwPass
 	if server == "" || email == "" || pass == "" {
-		a.setStatus("请填写服务器地址、邮箱和密码")
+		a.setStatus(a.t("err.fillServer"))
 		return
 	}
-	a.runBusy("正在登录 Bitwarden…", func() error {
+	a.runBusy(a.t("status.signingIn"), func() error {
 		client := bitwarden.New(bitwarden.Config{ServerURL: server, Email: email, Password: pass})
 		session, err := client.Login()
 		if err != nil {
@@ -512,18 +666,26 @@ func (a *App) SyncBitwarden() {
 		}
 		mygo.RunOnMain(func() {
 			a.bwPass = ""
-			a.status = fmt.Sprintf("同步完成：导入 %d，跳过 %d", imported, skipped)
+			a.status = a.tf("status.syncDone", imported, skipped)
 		})
 		return nil
 	}, func(err error) {
 		if err != nil {
-			a.setStatus("同步失败：" + err.Error())
+			a.setStatus(a.tf("err.syncFailed", err.Error()))
 		}
 	})
 }
 
+// scanLabels are the words the scan shows for the files it cannot read or
+// does not understand, resolved before the scan runs off the main thread.
+type scanLabels struct {
+	unreadable string
+	encrypted  string
+	unparsed   string
+}
+
 // scanKeys reads dir for private key files.
-func scanKeys(dir string, existing []keystore.Key) ([]ScanFile, error) {
+func scanKeys(dir string, existing []keystore.Key, labels scanLabels) ([]ScanFile, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
@@ -548,16 +710,16 @@ func scanKeys(dir string, existing []keystore.Key) ([]ScanFile, error) {
 		path := filepath.Join(dir, name)
 		raw, err := os.ReadFile(path)
 		if err != nil {
-			out = append(out, ScanFile{Path: path, Name: name, Err: "读取失败"})
+			out = append(out, ScanFile{Path: path, Name: name, Err: labels.unreadable})
 			continue
 		}
 		if !strings.Contains(string(raw), "PRIVATE KEY-----") {
 			continue
 		}
-		file := ScanFile{Path: path, Name: name, Selected: true, Algorithm: "无法解析"}
+		file := ScanFile{Path: path, Name: name, Selected: true, Algorithm: labels.unparsed}
 		if sshkey.IsEncrypted(raw) {
 			file.NeedsPhrase = true
-			file.Algorithm = "加密密钥"
+			file.Algorithm = labels.encrypted
 			file.Selected = false
 		} else if parsed, err := sshkey.Parse(raw, ""); err != nil {
 			file.Err = err.Error()
@@ -583,7 +745,7 @@ func (a *App) SetAutoStart(on bool) {
 		err := mygo.App.SetOpenAtLogin(on)
 		mygo.RunOnMain(func() {
 			if err != nil {
-				a.setStatus("设置开机启动失败：" + err.Error())
+				a.setStatus(a.tf("err.autoStart", err.Error()))
 			} else {
 				a.notify()
 			}
@@ -599,7 +761,7 @@ func (a *App) UpdateSettings(mutate func(*vault.Settings)) {
 	s := a.Vault.Settings()
 	mutate(&s)
 	if err := a.Vault.UpdateSettings(s); err != nil {
-		a.setStatus("保存设置失败：" + err.Error())
+		a.setStatus(a.tf("err.saveSettings", err.Error()))
 		return
 	}
 	a.notify()
@@ -608,7 +770,7 @@ func (a *App) UpdateSettings(mutate func(*vault.Settings)) {
 // SetVerification stores the trusted-program checkboxes.
 func (a *App) SetVerification(fields []string) {
 	if err := a.Policy.SetVerification(fields); err != nil {
-		a.setStatus("保存设置失败：" + err.Error())
+		a.setStatus(a.tf("err.saveSettings", err.Error()))
 	}
 	a.notify()
 }
@@ -616,12 +778,12 @@ func (a *App) SetVerification(fields []string) {
 // ChangePassword re-encrypts the vault under a new password.
 func (a *App) ChangePassword() {
 	if len([]rune(a.newPwd)) < MinPasswordLength {
-		a.changeErr = fmt.Sprintf("新密码至少 %d 个字符", MinPasswordLength)
+		a.changeErr = a.tf("err.minPassword", MinPasswordLength)
 		a.notify()
 		return
 	}
 	if a.newPwd != a.newPwd2 {
-		a.changeErr = "两次输入的密码不一致"
+		a.changeErr = a.t("err.mismatch")
 		a.notify()
 		return
 	}
@@ -629,16 +791,16 @@ func (a *App) ChangePassword() {
 	a.showChange = false
 	a.changeErr = ""
 	a.oldPwd, a.newPwd, a.newPwd2 = "", "", ""
-	a.runBusy("正在修改密码…", func() error {
+	a.runBusy(a.t("status.changingPwd"), func() error {
 		return a.Vault.ChangePassword(old, next)
 	}, func(err error) {
 		switch {
 		case errors.Is(err, vault.ErrWrongPassword):
-			a.setStatus("修改失败：当前密码错误")
+			a.setStatus(a.t("err.pwdWrong"))
 		case err != nil:
-			a.setStatus("修改失败：" + err.Error())
+			a.setStatus(a.tf("err.pwdFailed", err.Error()))
 		default:
-			a.setStatus("密码已修改")
+			a.setStatus(a.t("status.pwdChanged"))
 		}
 	})
 }
@@ -646,16 +808,16 @@ func (a *App) ChangePassword() {
 // Untrust removes a trusted program.
 func (a *App) Untrust(path string) {
 	if err := a.Policy.UntrustProgram(path); err != nil {
-		a.setStatus("移除失败：" + err.Error())
+		a.setStatus(a.tf("err.untrustFailed", err.Error()))
 		return
 	}
-	a.setStatus("已移除信任程序")
+	a.setStatus(a.t("status.untrusted"))
 }
 
 // ClearLog empties the audit log.
 func (a *App) ClearLog() {
 	if err := a.Log.Clear(); err != nil {
-		a.setStatus("清除日志失败：" + err.Error())
+		a.setStatus(a.tf("err.clearLog", err.Error()))
 		return
 	}
 	a.notify()
@@ -664,7 +826,7 @@ func (a *App) ClearLog() {
 // OpenDataDir opens the data directory in the file manager.
 func (a *App) OpenDataDir() {
 	if err := mygo.Shell.OpenPath(a.DataDir); err != nil {
-		a.setStatus("无法打开数据目录：" + err.Error())
+		a.setStatus(a.tf("err.openData", err.Error()))
 	}
 }
 
@@ -675,11 +837,16 @@ func (a *App) AgentRunning() bool {
 	return a.running
 }
 
-// SetAgentRunning records the listener state.
+// SetAgentRunning records the listener state. It is safe from any goroutine.
 func (a *App) SetAgentRunning(running bool) {
 	a.mu.Lock()
 	a.running = running
 	a.mu.Unlock()
-	a.refreshTray()
-	a.notify()
+	if !a.appReady {
+		return
+	}
+	mygo.RunOnMain(func() {
+		a.refreshTray()
+		a.notify()
+	})
 }

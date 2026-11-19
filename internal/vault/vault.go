@@ -59,12 +59,17 @@ type TrustedProgram struct {
 	SHA256         string `json:"sha256,omitempty"`
 }
 
-// Settings mirrors the fields the Dart version stored.
+// Settings mirrors the fields the Dart version stored, plus the appearance
+// and language choices.
 type Settings struct {
 	ConfirmTimeoutSeconds int      `json:"confirmTimeoutSeconds"`
 	LockOnScreenLock      bool     `json:"lockOnScreenLock"`
 	CloseToTrayHintShown  bool     `json:"closeToTrayHintShown"`
 	TrustVerification     []string `json:"trustVerification"`
+	// Theme is "system", "light" or "dark".
+	Theme string `json:"theme"`
+	// Language is "system", "zh" or "en".
+	Language string `json:"language"`
 }
 
 // DefaultSettings are the values a new vault starts with.
@@ -73,6 +78,8 @@ func DefaultSettings() Settings {
 		ConfirmTimeoutSeconds: 30,
 		LockOnScreenLock:      true,
 		TrustVerification:     []string{"path", "mtime"},
+		Theme:                 "system",
+		Language:              "system",
 	}
 }
 
@@ -232,6 +239,12 @@ func (v *Vault) Unlock(password string) error {
 	}
 	if data.Settings.TrustVerification == nil {
 		data.Settings.TrustVerification = []string{"path", "mtime"}
+	}
+	if data.Settings.Theme == "" {
+		data.Settings.Theme = "system"
+	}
+	if data.Settings.Language == "" {
+		data.Settings.Language = "system"
 	}
 
 	v.mu.Lock()
