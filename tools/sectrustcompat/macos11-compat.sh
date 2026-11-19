@@ -24,26 +24,42 @@ bin="$app/Contents/MacOS/sshkeygate"
 frameworks="$app/Contents/Frameworks"
 mkdir -p "$frameworks"
 
-# One object per architecture, then a universal object, so the shim runs on
-# Intel and Apple Silicon alike.
+# The shim is built for both architectures even on a machine of one of them,
+# so a single download runs on Intel and Apple Silicon alike.
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
-archs=""
-for arch in x86_64 arm64; do
+# Each slice is compiled and linked on its own, then lipo joins them: clang
+# makes a library of the host's architecture only, so linking once would ship
+# one slice and fail on the other kind of Mac.
+libs=""
+for arch in arm64 x86_64; do
 	# -mmacosx-version-min keeps the shim's own deployment target at 11, where
 	# its deprecated APIs are still the right ones.
 	clang -arch "$arch" -mmacosx-version-min=11.0 -c -O2 -DSECTRUST_COMPAT \
 		-o "$work/compat_$arch.o" "$src/sectrust_compat.c"
-	archs="$archs $work/compat_$arch.o"
+	clang -arch "$arch" -dynamiclib -mmacosx-version-min=11.0 \
+		-Wl,-exported_symbol,_SecTrustCopyCertificateChain \
+		-framework Security -framework CoreFoundation \
+		-o "$work/compat_$arch.dylib" "$work/compat_$arch.o"
+	libs="$libs $work/compat_$arch.dylib"
 done
 # shellcheck disable=SC2086
-lipo -create $archs -output "$work/sectrust_compat.o"
+lipo -create $libs -output "$frameworks/libsectrust_compat.dylib"
 
-clang -dynamiclib -mmacosx-version-min=11.0 \
-	-Wl,-exported_symbol,_SecTrustCopyCertificateChain \
-	-framework Security -framework CoreFoundation \
-	-o "$frameworks/libsectrust_compat.dylib" "$work/sectrust_compat.o"
+# A library with one slice would fail to load on the other kind of Mac, and
+# the failure would only show up there.
+want="arm64 x86_64"
+got=$(lipo -archs "$frameworks/libsectrust_compat.dylib" 2>/dev/null | tr ' ' '\n' | sort | tr '\n' ' ')
+for arch in $want; do
+	case " $got " in
+	*" $arch "*) ;;
+	*)
+		echo "the shim lacks $arch: $got" >&2
+		exit 1
+		;;
+	esac
+done
 
 # The shim must export the symbol and not import it.
 if [ -z "$(nm -g "$frameworks/libsectrust_compat.dylib" | grep _SecTrustCopyCertificateChain || true)" ]; then
