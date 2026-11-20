@@ -231,10 +231,10 @@ git push origin v0.4.0
 3. **确认队列在 UI 侧**：agent 只投递 `*agent.Pending` 并阻塞等待，`app.Confirmer` 负责排队、
    一次展示一个、倒计时与记日志。签发/拒绝/信任的副作用（`policy.Grant`、`TrustProgram`、
    审计）都在 Confirmer 里，agent 只负责匹配密钥和签名
-4. **只有 device_key 进凭据库**：MyGo `Secrets` 单条上限 2560 字节，vault 与私钥都加密落盘，
-   key 派生为 `PBKDF2(password‖device_key, salt, 100k)`
-5. **私钥不驻留内存**：vault 元数据不含私钥；每把私钥单独加密为 `keys/<id>.bin`，签名时解密
-   单条后立即清零
+4. **只有 device_key 进凭据库**：MyGo `Secrets` 单条上限 2560 字节，vault 与私钥都加密
+   落盘，凭据库里只放 32 字节设备密钥（派生方式见「安全实现」）
+5. **私钥不常驻内存**：vault 元数据不含私钥；每把私钥单独加密为 `keys/<id>.bin`，
+   签名时解密单条，用完擦除（细节见「安全实现」）
 6. **Windows 管道自己实现**：go-winio 不导出管道句柄，而 `GetNamedPipeClientProcessId` 需要它。
    `internal/agent/listen_windows.go` 直接用 `x/sys/windows` 的
    `CreateNamedPipe`/`ConnectNamedPipe`，同时拿到句柄做 peer 识别
@@ -267,15 +267,69 @@ git push origin v0.4.0
 18. **管道冲突靠试连发现**：Win32 命名管道在 `PIPE_UNLIMITED_INSTANCES` 下不排他，
     `CreateNamedPipe` 永不因被占用而失败；`Listen` 用 `dialPipeAt` 以客户端身份试连一次，
     连得上就记 `conflict`，托盘显示「被占用」
-19. **内存清零尽力而为**：擦除统一走 `internal/memguard`（`clear` + `runtime.KeepAlive`），
-    私钥用 `sshkey.Key.Wipe()` 擦 PEM 与解析出的 RSA/ECDSA/Ed25519 对象；`enc_key` 尽力
-    `mlock`/`VirtualLock`，macOS 关闭 core dump。密码与口令 API 一律收 `[]byte`，由调用方
-    负责擦自己的切片。仍清不干净的部分（Go string、KDF/HMAC/AES 内部状态、页文件、
-    崩溃转储）写在 README「私钥不驻留内存」，不要把擦除当安全边界；
-    `runtime/secret` 在 Windows / macOS 上是空操作，因此不采用
-20. **保持 PBKDF2 10 万轮**，与 Flutter 版一致的解锁延迟
+19. **内存擦除尽力而为**：统一走 `internal/memguard`，私钥用 `sshkey.Key.Wipe()`；密码与
+    口令 API 一律收 `[]byte`，调用方负责擦自己的切片。覆盖范围、残留与边界见「安全实现」，
+    不要把擦除当安全边界；`runtime/secret` 在 Windows / macOS 上是空操作，因此不采用
+20. **保持与 Flutter 版相同的 PBKDF2 轮数**（见「安全实现」），解锁延迟一致
 21. **不把签名放进独立进程**做内存隔离
 22. **macOS 最低版本 11.0**（Big Sur）：`Info.plist` 与 `-macos` 两处都要设，覆盖 Intel 与 Apple Silicon
+
+## 安全实现
+
+用户可见的安全承诺写在 [README](README.md#安全)，这里只记实现与边界。
+
+### 密钥派生与存储
+
+```
+enc_key   = PBKDF2-SHA256(password ‖ device_key, salt, 100000)
+vault     = AES-256-GCM(元数据 JSON, enc_key)
+keys/<id> = AES-256-GCM(私钥 PEM, enc_key)
+```
+
+- `device_key`（32 字节）只在系统凭据库：Windows Credential Manager / macOS Keychain。
+  其余全部加密落盘，因此不受 `Secrets` 单条 2560 字节上限约束
+- 每把私钥单独一个文件，不进入 vault 元数据
+- 所有写入先写临时文件再 `rename`，避免半写状态
+- 改密分两阶段：先写 `vault.migrate`（旧盐值 + 旧密文 + 旧私钥文件），成功后才删；
+  `Open` 时检测并恢复
+- `Vault.ChangePassword` 用所有权标志转移 `newKey`：成功时 vault 接管，失败时才清零。
+  不能在 `v.encKey` 仍与局部变量别名时清零，否则保存出的 `vault.json` 无法再解密
+  （回归测试 `TestChangePasswordKeepsWorkingKey`）
+
+### 内存中的密钥材料
+
+| 状态 | 内存中有什么 |
+|---|---|
+| 锁定 | 无密钥材料，SSH 请求直接失败 |
+| 解锁 | 元数据、公钥 blob、32 字节 `enc_key`（尽力 `mlock`/`VirtualLock`） |
+| 签名 | 单条私钥的 PEM 与解析后的密钥对象，签名后 `Wipe` |
+
+- 擦除统一走 `internal/memguard.Bytes`：`clear(b)` + `runtime.KeepAlive(b)`，
+  既覆盖内容，也避免编译器把写入当作死存储删除
+- `sshkey.Key` 保留解析出的 `raw crypto.PrivateKey` 并提供 `Wipe()`：擦 PEM，以及
+  RSA 的 `D`/`Primes`/`Precomputed`、ECDSA 的 `D`、Ed25519 的 64 字节私钥
+- `Parse` 拒绝无法擦除的类型（当前如 ML-DSA），宁可导入失败也不收下明文
+- 覆盖全部路径：`keystore.Sign`/`Import`、`app.scanKeyFile`、文本与拖拽导入、
+  Bitwarden 同步（`Forget`、`stretched`、展开的对称密钥、`Item.PrivateKey`）、
+  导出、`vault` 的临时 `encKey` 副本、`bitwarden` 的 `master`/`stretched`/`plain`
+- `vault.Create/Unlock/ChangePassword` 与 `sshkey.Parse`、`keystore.Import` 的口令参数
+  都是 `[]byte`，所有权在调用方；`app` 在调用点转换一次并 `defer` 擦除
+- `App.clearSensitiveState` 在锁库与清空数据时丢掉 UI 持有的密码、粘贴的私钥、扫描口令
+- `memguard.HardenProcess` 在 Windows 关闭崩溃错误框，在 macOS 把 `RLIMIT_CORE` 设为 0
+
+### 擦不掉的残留
+
+这是已知限制，不要在任何地方承诺得比这更多：
+
+- UI 输入是 Go `string`，不可变；置空只是丢引用，旧副本仍在内存里
+- `pbkdf2`/`argon2` 内部状态、`hmac` 的 pad、`aes.NewCipher` 的轮密钥调度表、
+  `ssh.ParseRawPrivateKey` 的解析缓冲都没有擦除接口
+- 签名瞬间私钥必然完整出现在进程内存；栈、寄存器、编译器副本不可达也不可控
+- 页文件、休眠文件、崩溃转储（含管理员配置的 WER LocalDumps）、同用户或管理员实时
+  读取进程内存，都不在应用控制内
+- `mlock`/`VirtualLock` 可能因配额或权限失败，静默降级，不影响功能
+
+结论：擦除是缩短暴露窗口的纵深防御，不是安全边界；防不住本机实时读取进程内存。
 
 ## 数据存储
 
