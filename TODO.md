@@ -4,36 +4,43 @@
 
 - [ ] macOS 实机验证：Unix socket、`SSH_AUTH_SOCK`、Keychain 存取、`kern.procargs2` 取路径
 - [ ] macOS 上 `LOCAL_PEERPID` 对系统完整性保护（SIP）进程的失败路径，确认降级为「无法识别来源」而不是放行
-- [x] **macOS 11.7.10（Big Sur）实机验证**：兼容层已生效，应用可在 11 上启动（dyld 通过、进入解锁界面）
 - [ ] macOS 11 上从 Finder 双击启动（SSH 会话下 Keychain 拒绝交互，需桌面会话确认）
-- [ ] macOS 11 上自动启动（13 以下走 launch agent）与托盘
-- [ ] macOS 上关窗隐藏 Dock 图标、点 Dock 恢复窗口（代码已就绪并有单测，需桌面会话目视确认）
-- [x] **Windows 管道冲突提示**：系统 OpenSSH agent 占用管道时，托状态显示「被占用」并给出停用引导
+- [ ] macOS 11 上自动启动（13 以下走 launch agent）
+- [ ] macOS 上点 Dock 图标恢复窗口（关窗后图标已消失，只能从菜单栏回来——确认这是期望行为）
+- [x] macOS 11.7.10（Big Sur）实机验证：兼容层生效，应用可启动并解锁
+- [x] macOS 关窗隐藏 Dock 图标（`ApplicationType` 实测转为 `UIElement`）
+- [x] 菜单栏图标单色无文字、左键开窗、右键出菜单
+- [x] Windows 托盘左键开窗、右键出菜单
+- [x] Windows 管道冲突提示
+- [x] 自动更新在 v0.3.3 发版后跑通（6 个产物齐全，清单签名正确）
 
 ## 加固
 
-- [ ] 解锁失败节流（原 Flutter 版有指数退避，Go 版尚未实现）
+- [ ] **解锁失败节流**：`unlock()` 当前无限重试，`vault.Unlock` 每次仍做满 10 万轮 PBKDF2。
+      原 Flutter 版有指数退避。建议：连续失败 N 次后按 2^n 秒延迟，成功或重启后清零。
+      代价小，纯 `app` 层逻辑 + 单测。
 
 ## UX
 
-- [x] 密钥列表支持搜索与排序
-- [x] 导入后自动切换到密钥列表页
+- [ ] 密钥列表按「来源 / 是否启用」筛选（当前只能按名称与指纹）
+- [ ] 设置页显示 Agent 端点的可复制文案（macOS 需 `export SSH_AUTH_SOCK=...`）
 
 ## 平台
 
 - [ ] Linux：Unix socket + `SO_PEERCRED`、libsecret、systemd user 自启、logind 锁屏
 - [ ] Linux：`XDG_RUNTIME_DIR` 下的 socket 路径
-- [ ] macOS 签名与公证：需要 Apple Developer ID 证书，见「macOS 打包」
-- [ ] macOS 图标资产：`Contents/Resources` 目前只有从 PNG 渲染的 `.icns`，若要更精细可提供 `Assets.car` 或 `.icon`
+- [ ] macOS 签名与公证：需 Apple Developer ID 证书。当前 ad hoc 签名，用户首次打开要
+      「右键 → 打开」或手动清 quarantine 属性
+- [ ] macOS 图标资产：`Contents/Resources` 只有从 PNG 渲染的 `.icns`，可提供 `Assets.car`
 
 ## 功能
 
-- [ ] 支持一个文件内多把私钥
-- [ ] 支持 SSH 证书（`*-cert-v01@openssh.com`）签名
-- [ ] 密钥导出（导出为 PEM）
-- [ ] 从 `flutter_secure_storage.dat` 的一次性迁移（当前明确不做）
-- [x] **自动更新**：`mygo.Updater` 检查 + 原地安装，`tools/updatesign` 从最终产物签包。
-      待办：把私钥加入 GitHub secret `MYGO_UPDATER_PRIVATE_KEY`，否则发布时只有警告、没有更新包
+- [ ] **一个文件内多把私钥**：`ssh.ParseRawPrivateKey` 会返回 `*ssh.MultiPrivateKey`，
+      `sshkey.Parse` 目前只保留了单把（`signer` 只存一个），需改成一个文件产出多把
+- [ ] **SSH 证书签名**（`*-cert-v01@openssh.com`）
+- [ ] **密钥导出**（导出为 PEM）：`vault.PrivateKey(id)` 已能取出明文，缺 UI 与写文件
+- [ ] Bitwarden 组织/集合过滤（当前同步账号下所有 SSH key）
+- [ ] 从 `flutter_secure_storage.dat` 的一次性迁移（**明确不做**，格式已不兼容）
 
 ## macOS 打包
 
@@ -47,6 +54,7 @@
 {
   "identifier": "com.sshkeygate.app",
   "icon": "app/assets/icon.png",
+  "updates": { "publicKey": "...", "github": "howmp/sshkeygate" },
   "macos": { "minimumSystemVersion": "11.0" }
 }
 ```
@@ -116,9 +124,9 @@ MYGO_LDFLAGS="-macos 11.0" \
 
 | 平台参数 | 产物 |
 |---|---|
-| `darwin/universal` | `sshkeygate-0.3.0.dmg`（文件名不含架构） |
-| `darwin/arm64` | `sshkeygate-0.3.0-arm64.dmg` |
-| `darwin/amd64` | `sshkeygate-0.3.0-amd64.dmg` |
+| `darwin/universal` | `sshkeygate-<version>.dmg`（文件名不含架构） |
+| `darwin/arm64` | `sshkeygate-<version>-arm64.dmg` |
+| `darwin/amd64` | `sshkeygate-<version>-amd64.dmg` |
 
 ## 当前决定
 
@@ -136,4 +144,5 @@ MYGO_LDFLAGS="-macos 11.0" \
 - **Windows 用 `go build` 而非 `mygo build`**（保留提交的 `.syso` 图标），因此要手动
   补 `-X github.com/egoist/mygo.production=1` 与 `packageUpdateFeed` / `packageUpdateKey`，
   否则 `IsDev()` 为真、更新被判定为不可用
+- **关窗只隐藏**，不再有「已最小化到托盘」的首次提示；`CloseAction` 只有 quit / hide 两种
 - macOS 最低版本 11.0（Big Sur）：`Info.plist` 与 `-macos` 两处都要设，覆盖 Intel 与 Apple Silicon

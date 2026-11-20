@@ -12,7 +12,7 @@
 - **进程识别** — Windows 走 `GetNamedPipeClientProcessId` + `QueryFullProcessImageNameW`；macOS 走 `LOCAL_PEERPID` + `kern.procargs2`。无法识别来源时永不自动放行
 - **信任程序校验** — 以可执行文件路径为身份，可选校验最后修改时间与 SHA-256
 - **操作日志** — JSONL 持久化，最多 500 条，锁定状态下也可记录
-- **系统托盘常驻** — 关窗最小化到托盘，Agent 持续可用
+- **常驻托盘** — 关窗只隐藏窗口，Agent 继续服务；左键点图标唤回窗口，右键出菜单
 - **自动更新** — 配置页检查新版本、下载并原地安装，安装后自动重启；更新包由 Ed25519 签名，只接受用本项目密钥签署的包
 - **单实例** — 重复启动会退出新进程，并把已运行的窗口还原到前台
 - **开机启动 / 锁屏自动锁定**
@@ -155,6 +155,22 @@ MYGO_UPDATER_PRIVATE_KEY=... go run ./tools/updatesign \
 **限制。** 应用必须能写自己所在的目录：Windows 放在用户可写的文件夹里、
 macOS 拖进 `/Applications` 且归当前用户所有。装在管理员所有的位置时，配置页
 会说明无法自动更新，需手动下载。
+
+### 发版
+
+打一个 tag 就会构建并发布全部产物，无需改 `mygo.json`（CI 从 tag 同步版本号）：
+
+```bash
+git tag -a v0.4.0 -m "v0.4.0"
+git push origin v0.4.0
+```
+
+一次发布产出 6 个文件：Windows exe、macOS DMG，以及两个平台各一份更新清单
+（`update-<target>.json`）与存档（`.tar.gz`）。已安装的旧版本从
+`releases/latest/download/` 读取清单，所以清单必须随 release 发布，不能漏传。
+
+没有 `MYGO_UPDATER_PRIVATE_KEY` 时，CI 打一条警告并跳过签包：exe 与 DMG 照常
+发布，但这次发布不会有自动更新文件。
 
 ## 目录结构
 

@@ -53,7 +53,9 @@ app/
   icons.go                # 侧边栏线性图标（Painter 绘制）
   confirm.go              # 签名确认队列
   tray.go                 # 托盘菜单
-  icon.go                 # 程序生成的托盘图标
+  icon.go                 # 托盘图标 + 左键/右键分发
+  update.go               # 检查更新 / 下载 / 安装
+  dock.go                 # macOS Dock 策略 + 点 Dock 恢复窗口
 internal/
   vault/                  # 加密存储（PBKDF2+AES-GCM、原子写、改密回滚）
   keystore/               # 元数据 + 按需解密签名
@@ -77,6 +79,11 @@ internal/
 9. **信任记录存全量**：路径 + 修改时间 + SHA-256 都保存，设置只控制校验哪些字段
 10. **改密可回滚**：先写 `vault.migrate`（含旧盐值与旧密文），成功后才删；`Open` 时检测并恢复
 11. **单实例**：`RequestSingleInstanceLock` 的命名取自 `App.SetName`，所以先设名字再取锁；后启动的实例被转发参数后直接退出，首个实例在 `OnSecondInstance` 里 `ShowWindow()`（无条件 `Restore` + `Show` + `Focus`，因为外部最小化时 `IsMinimized()` 不可靠）
+12. **托盘左键开窗、右键出菜单**：Windows 原生就分开上报（`WM_LBUTTONUP` / `WM_RBUTTONUP`），后者还会自动弹出 `SetMenu` 给的菜单；AppKit 则只要 status item 带菜单，任何点击都先弹菜单。所以 `refreshTray` 在 macOS 上直接返回（不给 status item 菜单），右键时临时 `SetMenu` + `PopUpMenu` + `SetMenu(nil)`，并用 `popping` 守卫防止 `PopUpMenu` 内部 `performClick` 重入
+13. **关窗不退出**：`CloseRequested` 只剩 `CloseQuit`（quitting 中）与 `CloseHide` 两种；macOS 隐藏时同时切到 `Accessory` 策略退出 Dock，`ShowWindow` 里先切回 `Regular`
+14. **更新包自己签**：`mygo build` 签的是加兼容层之前的包，用它更新会让 macOS 11 启动不了。CI 在 shim + codesign 之后跑 `tools/updatesign`，从最终产物重新打包签名
+15. **Windows 用 `go build`**（保留提交的 `.syso` 图标），因此要手动补 `-X github.com/egoist/mygo.production=1` 与 `packageUpdateFeed` / `packageUpdateKey`；缺 `production=1` 会让 `IsDev()` 为真、更新被判为不可用
+16. **管道冲突靠试连发现**：Win32 命名管道在 `PIPE_UNLIMITED_INSTANCES` 下不排他，`CreateNamedPipe` 永不因被占用而失败；`Listen` 用 `dialPipeAt` 以客户端身份试连一次，连得上就记 `conflict`，托盘显示「被占用」
 
 ## 数据存储
 
