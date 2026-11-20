@@ -120,7 +120,6 @@ type App struct {
 	newPwd     string
 	newPwd2    string
 	changeErr  string
-	trayHint   bool
 
 	// Settings widgets bind to these.
 	timeoutSlider    float64
@@ -164,8 +163,6 @@ type CloseAction int
 const (
 	// CloseQuit lets the window close, so the app can exit.
 	CloseQuit CloseAction = iota
-	// CloseExplain keeps the window open and shows the tray explanation.
-	CloseExplain
 	// CloseHide hides the window and leaves the agent running.
 	CloseHide
 )
@@ -178,9 +175,6 @@ func (a *App) CloseRequested() CloseAction {
 	if a.quitting {
 		return CloseQuit
 	}
-	if !a.Vault.Settings().CloseToTrayHintShown {
-		return CloseExplain
-	}
 	return CloseHide
 }
 
@@ -192,34 +186,18 @@ func (a *App) Quit() {
 
 // KeepWindowOpen makes closing the window hide it, keeping the agent up.
 //
-// The first time, the window stays open and explains what happened; the
-// explanation is shown once. On macOS the app also leaves the Dock, since
-// nothing of it is on screen but the menu bar icon.
+// On macOS the app also leaves the Dock, since nothing of it is on screen but
+// the menu bar icon.
 func (a *App) KeepWindowOpen(win *mygo.Window) {
 	win.OnClose(func(e *mygo.CloseEvent) {
-		switch a.CloseRequested() {
-		case CloseQuit:
+		if a.CloseRequested() == CloseQuit {
 			// Let the window close so the app can exit.
 			return
-		case CloseHide:
-			e.PreventDefault()
-			win.Hide()
-			a.hideFromDock()
-		case CloseExplain:
-			e.PreventDefault()
-			a.trayHint = true
-			if err := a.Vault.UpdateSettings(shownHintSettings(a.Vault.Settings())); err != nil {
-				a.status = a.tf("err.saveSettings", err.Error())
-			}
-			win.Invalidate()
 		}
+		e.PreventDefault()
+		win.Hide()
+		a.hideFromDock()
 	})
-}
-
-// shownHintSettings marks the close-to-tray hint as seen.
-func shownHintSettings(s vault.Settings) vault.Settings {
-	s.CloseToTrayHintShown = true
-	return s
 }
 
 // SetStatus updates the status line from any goroutine.

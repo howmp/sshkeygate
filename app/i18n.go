@@ -197,10 +197,6 @@ var messages = map[string]message{
 	"password.new":     {"新密码", "New password"},
 	"password.confirm": {"确认新密码", "Confirm new password"},
 	"password.ok":      {"确认", "Confirm"},
-	"trayHint.title":   {"已最小化到系统托盘", "Still running in the tray"},
-	"trayHint.body": {"关闭主窗口不会退出 SSH Agent。你可以从系统托盘重新打开或退出程序。",
-		"Closing the window does not stop the SSH agent. Open it again or quit from the tray."},
-	"trayHint.ok": {"知道了", "Got it"},
 
 	// Statuses and errors.
 	"status.created":     {"已创建并解锁", "Vault created"},

@@ -188,28 +188,6 @@ func TestSidebarShowsTheBuildVersion(t *testing.T) {
 	}
 }
 
-func TestCloseRequested(t *testing.T) {
-	a := newTestApp(t, true)
-
-	// The first close explains the tray instead of hiding.
-	if got := a.CloseRequested(); got != CloseExplain {
-		t.Errorf("first close = %v, want CloseExplain", got)
-	}
-	if err := a.Vault.UpdateSettings(shownHintSettings(a.Vault.Settings())); err != nil {
-		t.Fatalf("UpdateSettings: %v", err)
-	}
-	if got := a.CloseRequested(); got != CloseHide {
-		t.Errorf("later close = %v, want CloseHide", got)
-	}
-
-	// Quitting must win over the close-to-tray behaviour, or the quit is
-	// cancelled by the window it closes.
-	a.quitting = true
-	if got := a.CloseRequested(); got != CloseQuit {
-		t.Errorf("close while quitting = %v, want CloseQuit", got)
-	}
-}
-
 func TestPromptWindowStateIsCleared(t *testing.T) {
 	a := newTestApp(t, true)
 	a.promptActive = true

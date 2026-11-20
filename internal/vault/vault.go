@@ -64,7 +64,6 @@ type TrustedProgram struct {
 type Settings struct {
 	ConfirmTimeoutSeconds int      `json:"confirmTimeoutSeconds"`
 	LockOnScreenLock      bool     `json:"lockOnScreenLock"`
-	CloseToTrayHintShown  bool     `json:"closeToTrayHintShown"`
 	TrustVerification     []string `json:"trustVerification"`
 	// Theme is "system", "light" or "dark".
 	Theme string `json:"theme"`

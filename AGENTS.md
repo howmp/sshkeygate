@@ -89,7 +89,7 @@ internal/
 | device_key | Credential Manager / Keychain，account `device_key` |
 
 **vault 明文结构**：`{keys[], trustedPaths[], trustedPrograms[], settings{}}`，**不含私钥**。
-**settings 字段**：`confirmTimeoutSeconds`(30)、`lockOnScreenLock`(true)、`closeToTrayHintShown`(false)、`trustVerification`(["path","mtime"])。
+**settings 字段**：`confirmTimeoutSeconds`(30)、`lockOnScreenLock`(true)、`trustVerification`(["path","mtime"])。
 
 ## Agent 端点
 

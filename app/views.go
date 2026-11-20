@@ -38,7 +38,6 @@ func (a *App) View(c *ui.Context) {
 		a.confirmView(c, p)
 		a.renameView(c, p)
 		a.changePasswordView(c, p)
-		a.trayHintView(c, p)
 	})
 }
 
@@ -874,18 +873,6 @@ func (a *App) changePasswordView(c *ui.Context, p *Palette) {
 	})
 	if !open {
 		a.showChange = false
-	}
-}
-
-func (a *App) trayHintView(c *ui.Context, p *Palette) {
-	if !a.trayHint {
-		return
-	}
-	// AlertDialog writes false into the pointer when the user answers or
-	// presses Escape. The window hides once the explanation is read.
-	ui.AlertDialog(c, &a.trayHint, a.t("trayHint.title"), a.t("trayHint.body"), a.t("trayHint.ok"))
-	if !a.trayHint && a.win != nil {
-		a.win.Hide()
 	}
 }
 

@@ -6,14 +6,32 @@ import (
 
 // refreshTray rebuilds the tray menu to match the current state. It must run
 // on the main thread, because the labels follow the interface language.
+//
+// On macOS there is nothing to hand over: the status item keeps no menu, so
+// that a click reaches OnClick and opens the window, and the menu is built
+// when a right click pops it up (icon.go). Elsewhere the menu is set now:
+// the notification area reports the two clicks apart, and opens it on a
+// right click by itself.
 func (a *App) refreshTray() {
 	if a.tray == nil {
 		return
 	}
+	if darwin() {
+		return
+	}
+	a.tray.SetMenu(mygo.NewMenu(a.trayItems()))
+}
+
+// trayItems builds the menu as the current state and language draw it.
+//
+// It is built when the menu is about to show rather than when the state
+// changes, so a menu opened after a change is always current: on macOS the
+// status item keeps no menu, and an opened one cannot be swapped under the
+// user's pointer.
+func (a *App) trayItems() []*mygo.MenuItem {
 	locked := a.Locked()
 	pending := a.Confirm.Count()
-
-	items := []*mygo.MenuItem{
+	return []*mygo.MenuItem{
 		{
 			ID:       "status-agent",
 			Label:    a.tf("tray.agent", a.agentStateLabel()),
@@ -54,7 +72,6 @@ func (a *App) refreshTray() {
 			},
 		},
 	}
-	a.tray.SetMenu(mygo.NewMenu(items))
 }
 
 // agentStateLabel names whether the agent is listening.

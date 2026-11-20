@@ -10,18 +10,9 @@ import (
 func TestClosingHidesFromTheDock(t *testing.T) {
 	a := newTestApp(t, true)
 
-	// The first close explains the tray and keeps the window, so the Dock
-	// icon stays: nothing was hidden.
-	if got := a.CloseRequested(); got != CloseExplain {
-		t.Fatalf("first close = %v, want CloseExplain", got)
-	}
-
-	// Once the hint has been shown, closing hides the window and the app.
-	if err := a.Vault.UpdateSettings(shownHintSettings(a.Vault.Settings())); err != nil {
-		t.Fatalf("UpdateSettings: %v", err)
-	}
+	// Closing hides the window and leaves the agent serving.
 	if got := a.CloseRequested(); got != CloseHide {
-		t.Fatalf("later close = %v, want CloseHide", got)
+		t.Fatalf("close = %v, want CloseHide", got)
 	}
 
 	// hideFromDock runs on any platform but only records without a window;
@@ -41,9 +32,6 @@ func TestClosingHidesFromTheDock(t *testing.T) {
 // window closes for real, so the Dock icon goes with the process.
 func TestQuitKeepsTheDock(t *testing.T) {
 	a := newTestApp(t, true)
-	if err := a.Vault.UpdateSettings(shownHintSettings(a.Vault.Settings())); err != nil {
-		t.Fatalf("UpdateSettings: %v", err)
-	}
 
 	a.quitting = true
 	if got := a.CloseRequested(); got != CloseQuit {
