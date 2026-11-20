@@ -73,6 +73,18 @@ func TestPreview(t *testing.T) {
 		writePreview(t, out, mode+"-confirm", a, MainWidth, MainHeight, nil)
 		a.Confirm.RejectAll()
 
+		// Both steps of the erase confirmation, which is the only way out of
+		// a forgotten password. Locked first: that is when they are offered.
+		a.Vault.Lock()
+		a.Keys.Clear()
+		width, height := a.LockedSize()
+		writePreview(t, out, mode+"-unlock-wipe", a, width, height, func() { a.RequestWipe() })
+		writePreview(t, out, mode+"-unlock-wipe-confirm", a, width, height, func() {
+			a.RequestWipe()
+			a.AdvanceWipe()
+		})
+		a.CancelWipe()
+
 		// The Chinese interface, which has different label widths.
 		a.language = LangChinese
 		writePreview(t, out, mode+"-keys-zh", a, MainWidth, MainHeight, func() { a.page = PageKeys })

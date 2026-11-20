@@ -56,6 +56,50 @@ func sampleMeta() KeyMeta {
 	}
 }
 
+// TestDestroyRemovesEverything checks the way out of a forgotten password:
+// the vault and every key file go, and a new vault can be made in its place.
+func TestDestroyRemovesEverything(t *testing.T) {
+	v, dir := newTestVault(t)
+	if err := v.Create("a password to forget"); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := v.AddKey(sampleMeta(), []byte("pem")); err != nil {
+		t.Fatalf("AddKey: %v", err)
+	}
+
+	vaultPath := filepath.Join(dir, "vault.json")
+	keyPath := filepath.Join(dir, "keys", "key-1.bin")
+	for _, p := range []string{vaultPath, keyPath} {
+		if _, err := os.Stat(p); err != nil {
+			t.Fatalf("%s should exist first: %v", p, err)
+		}
+	}
+
+	if err := v.Destroy(); err != nil {
+		t.Fatalf("Destroy: %v", err)
+	}
+	if v.Exists() {
+		t.Error("the vault still reports itself as present")
+	}
+	if v.IsUnlocked() {
+		t.Error("the vault is still unlocked")
+	}
+	for _, p := range []string{vaultPath, keyPath} {
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Errorf("%s survived (err = %v)", p, err)
+		}
+	}
+
+	// The same Vault object must be usable for the next vault.
+	if err := v.Create("a different password"); err != nil {
+		t.Fatalf("Create after Destroy: %v", err)
+	}
+	v.Lock()
+	if err := v.Unlock("a different password"); err != nil {
+		t.Fatalf("Unlock the new vault: %v", err)
+	}
+}
+
 func TestCreateUnlockLock(t *testing.T) {
 	v, _ := newTestVault(t)
 	if v.Exists() {

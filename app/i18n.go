@@ -170,6 +170,8 @@ var messages = map[string]message{
 	"status.installingUpdate": {"正在安装更新", "Installing the update"},
 	"status.exported":         {"已导出到 %s", "Exported to %s"},
 	"status.endpointCopied":   {"Agent 地址已复制", "Agent endpoint copied"},
+	"status.wiping":           {"正在清空数据", "Erasing everything"},
+	"status.wiped":            {"数据已清空，请重新设置密码", "Everything was erased; set a password to start over"},
 
 	// Exports.
 	"export.title":   {"导出私钥", "Export private key"},
@@ -178,6 +180,21 @@ var messages = map[string]message{
 		"The exported file holds the private key unencrypted. Keep it safe: anyone who reads it can sign in as you until the key is replaced."},
 	"export.continue":  {"选择保存位置", "Choose where to save"},
 	"export.filterPem": {"私钥文件", "Private key"},
+
+	// Data wipe.
+	"wipe.open":  {"忘记密码？清空数据", "Forgot password? Erase data"},
+	"wipe.title": {"清空所有数据", "Erase all data"},
+	"wipe.body": {"密码无法找回，密钥库里的私钥也无法解密。清空后应用会恢复为初次运行的状态，重新设置密码即可继续使用。",
+		"The password cannot be recovered, and the keys in the vault cannot be decrypted. After erasing, the app starts over as on first run."},
+	"wipe.loses.vault":    {"密钥库与全部私钥", "The vault and every private key"},
+	"wipe.loses.keys":     {"信任程序列表与设置", "Trusted programs and settings"},
+	"wipe.loses.log":      {"操作日志", "The signing log"},
+	"wipe.loses.settings": {"主题与语言选择", "Theme and language choices"},
+	"wipe.continue":       {"我已了解，继续", "I understand, continue"},
+	"wipe.confirmTitle":   {"最后确认", "Last confirmation"},
+	"wipe.confirmBody":    {"此操作无法撤销。请输入「%s」以确认。", "This cannot be undone. Type \"%s\" to confirm."},
+	"wipe.word":           {"清空", "erase"},
+	"wipe.do":             {"永久清空", "Erase permanently"},
 
 	// Log page.
 	"log.title":   {"签名请求日志", "Signing log"},
@@ -238,6 +255,7 @@ var messages = map[string]message{
 	"err.wrongPassword":     {"密码错误", "Wrong password"},
 	"err.wrongPasswordWait": {"密码错误，请 %d 秒后再试", "Wrong password; try again in %d s"},
 	"err.unlockThrottled":   {"尝试过于频繁，请 %d 秒后再试", "Too many attempts; try again in %d s"},
+	"err.wipeFailed":        {"清空失败：%s", "Could not erase everything: %s"},
 	"err.deleteFailed":      {"删除失败：%s", "Could not delete: %s"},
 	"err.opFailed":          {"操作失败：%s", "Failed: %s"},
 	"err.renameFailed":      {"重命名失败：%s", "Could not rename: %s"},

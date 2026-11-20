@@ -38,6 +38,8 @@ app/
   icon.go                 # 托盘图标 + 左键/右键分发
   update.go               # 检查更新 / 下载 / 安装
   export.go               # 私钥导出为 PEM
+  wipe.go                 # 清空全部数据（忘记密码时的出路）
+  wipe_view.go            # 清空的两步确认弹窗
   dock.go                 # macOS Dock 策略 + 点 Dock 恢复窗口
   endpoint.go             # Agent 地址与复制
   prefs.go                # 明文主题/语言，供解锁前渲染
@@ -59,7 +61,7 @@ tools/sectrustcompat/     # macOS 11 兼容层
 
 | 包 | 覆盖 |
 |---|---|
-| `app/` | UI（`ui.NewTester` 无窗口渲染）、确认队列、主题、i18n、图标、窗口尺寸、解锁节流、导出 |
+| `app/` | UI（`ui.NewTester` 无窗口渲染）、确认队列、主题、i18n、图标、窗口尺寸、解锁节流、导出、清空数据 |
 | `internal/agent` | 协议响应、异常帧、并发、真实 Windows 管道与 peer 识别、管道冲突 |
 | `internal/sshkey` | 夹具指纹、三种 RSA flags、加密私钥往返 |
 | `internal/vault` | 创建/解锁/改密/中断恢复/密文不含明文 |
@@ -237,21 +239,25 @@ git push origin v0.4.0
     `performClick` 重入
 13. **关窗不退出**：`CloseRequested` 只剩 `CloseQuit`（quitting 中）与 `CloseHide` 两种；
     macOS 隐藏时同时切到 `Accessory` 策略退出 Dock，`ShowWindow` 里先切回 `Regular`
-14. **解锁失败退避**：连续 3 次错误后按 1/2/4/8… 秒递增，上限 60 秒，成功即清零。在
+14. **清空数据是唯一的出路**：密码只用于派生 `enc_key`，丢了就没有恢复途径，所以解锁页
+    提供 `Vault.Destroy()`。它两步确认（第二步要输入本地化的「清空」二字），删 `vault.json`、
+    `keys/*`、`agent.log`、`prefs.json`。`SecretStore` 没有删除接口，`device_key` 留着——
+    没有旧的盐与密码它解不开任何东西，下次建库复用
+15. **解锁失败退避**：连续 3 次错误后按 1/2/4/8… 秒递增，上限 60 秒，成功即清零。在
     PBKDF2 之前拦下，所以爆破成本从「每次 10 万轮」变成「每次还要等」
-15. **更新包自己签**：`mygo build` 签的是加兼容层之前的包，用它更新会让 macOS 11 启动不了。
+16. **更新包自己签**：`mygo build` 签的是加兼容层之前的包，用它更新会让 macOS 11 启动不了。
     CI 在 shim + codesign 之后跑 `tools/updatesign`，从最终产物重新打包签名
-16. **Windows 用 `go build`**（保留提交的 `.syso` 图标），因此要手动补
+17. **Windows 用 `go build`**（保留提交的 `.syso` 图标），因此要手动补
     `-X github.com/egoist/mygo.production=1` 与 `packageUpdateFeed` / `packageUpdateKey`；
     缺 `production=1` 会让 `IsDev()` 为真、更新被判为不可用
-17. **管道冲突靠试连发现**：Win32 命名管道在 `PIPE_UNLIMITED_INSTANCES` 下不排他，
+18. **管道冲突靠试连发现**：Win32 命名管道在 `PIPE_UNLIMITED_INSTANCES` 下不排他，
     `CreateNamedPipe` 永不因被占用而失败；`Listen` 用 `dialPipeAt` 以客户端身份试连一次，
     连得上就记 `conflict`，托盘显示「被占用」
-18. **内存清零尽力而为**：`zero()` 有效但清不干净（详见 README「私钥不驻留内存」）；
+19. **内存清零尽力而为**：`zero()` 有效但清不干净（详见 README「私钥不驻留内存」）；
     `runtime/secret` 在 Windows / macOS 上是空操作，因此不采用
-19. **保持 PBKDF2 10 万轮**，与 Flutter 版一致的解锁延迟
-20. **不把签名放进独立进程**做内存隔离
-21. **macOS 最低版本 11.0**（Big Sur）：`Info.plist` 与 `-macos` 两处都要设，覆盖 Intel 与 Apple Silicon
+20. **保持 PBKDF2 10 万轮**，与 Flutter 版一致的解锁延迟
+21. **不把签名放进独立进程**做内存隔离
+22. **macOS 最低版本 11.0**（Big Sur）：`Info.plist` 与 `-macos` 两处都要设，覆盖 Intel 与 Apple Silicon
 
 ## 数据存储
 

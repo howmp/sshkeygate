@@ -266,6 +266,52 @@ func (v *Vault) Lock() {
 	v.unlocked = false
 }
 
+// Destroy deletes the vault and every key file.
+//
+// It is the way out for a user who cannot open the vault any more: the
+// password is the only thing that derives enc_key, so forgetting it leaves
+// the files unreadable.
+//
+// The device key stays in the credential store. It decrypts nothing without
+// the salt and the password that were mixed into the old vault, so leaving it
+// behind costs nothing, and SecretStore has no way to remove an entry; the
+// next vault reuses it, which only means this device is still this device.
+func (v *Vault) Destroy() error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	zero(v.encKey)
+	v.encKey = nil
+	v.salt = nil
+	v.data = &payload{Settings: DefaultSettings()}
+	v.unlocked = false
+
+	// A failed removal leaves something behind, which the caller reports:
+	// the point of the call is that nothing is left.
+	var firstErr error
+	note := func(err error) {
+		if err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+
+	keys := filepath.Join(v.dir, "keys")
+	entries, err := os.ReadDir(keys)
+	switch {
+	case err != nil && !errors.Is(err, fs.ErrNotExist):
+		note(err)
+	default:
+		for _, e := range entries {
+			note(os.Remove(filepath.Join(keys, e.Name())))
+		}
+	}
+	// The migration record belongs to a password change in flight, which is
+	// moot once the vault goes. A missing file is not an error.
+	_ = os.Remove(filepath.Join(v.dir, "vault.migrate"))
+	_ = os.Remove(v.vaultPath())
+	return firstErr
+}
+
 // Settings returns a copy of the vault settings.
 func (v *Vault) Settings() Settings {
 	v.mu.RLock()

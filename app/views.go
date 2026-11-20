@@ -32,6 +32,9 @@ func (a *App) View(c *ui.Context) {
 	ui.Column(c).Fill().Background(p.Content).Children(func() {
 		if a.Locked() {
 			a.unlockView(c, p)
+			// The way out of a forgotten password is offered on the unlock
+			// screen itself, so its confirmations are drawn here.
+			a.wipeView(c, p)
 			return
 		}
 		a.mainView(c, p)
@@ -39,6 +42,7 @@ func (a *App) View(c *ui.Context) {
 		a.renameView(c, p)
 		a.changePasswordView(c, p)
 		a.exportView(c, p)
+		a.wipeView(c, p)
 	})
 }
 
@@ -91,6 +95,16 @@ func (a *App) unlockView(c *ui.Context, p *Palette) {
 			}
 			if a.busy && a.busyLabel != "" {
 				ui.Text(c, a.busyLabel).FontSize(11).TextColor(p.TextLight).TextAlign(ui.Center)
+			}
+			// Forgetting the password leaves the vault unreadable - there is
+			// no recovery, only starting over - so the way out sits here, on
+			// the screen that asks for the password.
+			if !firstRun {
+				ui.Row(c).Height(2)
+				if ui.Button(c, a.t("wipe.open")).FillWidth().Height(30).
+					Disabled(a.busy).Clicked() {
+					a.RequestWipe()
+				}
 			}
 		})
 	})

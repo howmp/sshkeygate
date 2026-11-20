@@ -107,26 +107,33 @@ type App struct {
 	// next one may run.
 	unlockFailures  int
 	unlockNotBefore time.Time
-	importTab       int
-	textName        string
-	textKey         string
-	textPass        string
-	scanDir         string
-	scanFiles       []ScanFile
-	selectAll       bool
-	bwServer        string
-	bwEmail         string
-	bwPass          string
-	showRename      bool
-	renameID        string
-	renameName      string
-	showExport      bool
-	exportID        string
-	showChange      bool
-	oldPwd          string
-	newPwd          string
-	newPwd2         string
-	changeErr       string
+
+	// Data wipe: stage 1 warns, stage 2 requires the typed word.
+	showWipe    bool
+	wipeStage   int
+	wipeConfirm string
+	wipeErr     string
+
+	importTab  int
+	textName   string
+	textKey    string
+	textPass   string
+	scanDir    string
+	scanFiles  []ScanFile
+	selectAll  bool
+	bwServer   string
+	bwEmail    string
+	bwPass     string
+	showRename bool
+	renameID   string
+	renameName string
+	showExport bool
+	exportID   string
+	showChange bool
+	oldPwd     string
+	newPwd     string
+	newPwd2    string
+	changeErr  string
 
 	// Settings widgets bind to these.
 	timeoutSlider    float64
