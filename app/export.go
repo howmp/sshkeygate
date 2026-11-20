@@ -7,6 +7,7 @@ import (
 	"github.com/egoist/mygo"
 
 	"github.com/sshkeygate/sshkeygate/internal/keystore"
+	"github.com/sshkeygate/sshkeygate/internal/memguard"
 )
 
 // ConfirmExport asks whether to write the private key to a file, then does.
@@ -66,7 +67,7 @@ func (a *App) writeExportedKey(id, path string) error {
 	}
 	// The key is in memory only while it is written, then overwritten; the
 	// copy inside the vault stays encrypted.
-	defer wipe(pem)
+	defer memguard.Bytes(pem)
 
 	// 0600: only its owner reads the key, and the file is created with that
 	// mode rather than fixed up afterwards.
@@ -107,13 +108,6 @@ func exportName(name string) string {
 		}
 	}
 	return string(cleaned) + ".pem"
-}
-
-// wipe overwrites key material the app held briefly.
-func wipe(b []byte) {
-	for i := range b {
-		b[i] = 0
-	}
 }
 
 // withKeyExtension adds the extension a private key file should have.

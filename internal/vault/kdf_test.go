@@ -3,6 +3,8 @@ package vault
 import (
 	"bytes"
 	"testing"
+
+	"github.com/sshkeygate/sshkeygate/internal/memguard"
 )
 
 // TestDeriveKeyLeavesNoPasswordCopy checks the one part of the password
@@ -14,18 +16,21 @@ import (
 func TestDeriveKeyLeavesNoPasswordCopy(t *testing.T) {
 	// Copy the logic's observable effect: after deriveKey returns, the only
 	// slices that still hold the password are the caller's own.
-	password := "correct horse battery"
+	password := []byte("correct horse battery")
 	device := []byte("device-key-material-0123456789ab")
 	salt := bytes.Repeat([]byte{7}, saltLen)
 
 	key := deriveKey(password, device, salt)
-	defer zero(key)
+	defer memguard.Bytes(key)
 
 	if len(key) != 32 {
 		t.Fatalf("key length = %d, want 32", len(key))
 	}
-	if bytes.Contains(key, []byte(password)) {
+	if bytes.Contains(key, password) {
 		t.Error("the derived key contains the password verbatim")
+	}
+	if string(password) != "correct horse battery" {
+		t.Error("deriveKey wiped the caller's password")
 	}
 	// The device key is public knowledge only in the sense that it protects
 	// the vault alongside the password; it must not become the key itself.
@@ -36,7 +41,7 @@ func TestDeriveKeyLeavesNoPasswordCopy(t *testing.T) {
 	// Deriving twice with the same inputs must agree, which shows the wipe
 	// did not corrupt the inputs.
 	again := deriveKey(password, device, salt)
-	defer zero(again)
+	defer memguard.Bytes(again)
 	if !bytes.Equal(key, again) {
 		t.Error("the same inputs produced different keys")
 	}

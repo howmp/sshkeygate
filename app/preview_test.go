@@ -43,7 +43,7 @@ func TestPreview(t *testing.T) {
 	for _, mode := range []string{ThemeLight, ThemeDark} {
 		a := newTestApp(t, true)
 		a.themeMode = mode
-		if _, _, err := a.Keys.Import(keyPEM, "github-ed25519", "", keystore.SourceManual); err != nil {
+		if _, _, err := a.Keys.Import(keyPEM, "github-ed25519", nil, keystore.SourceManual); err != nil {
 			t.Fatalf("import: %v", err)
 		}
 		// The other algorithm and source too, so the render shows whether the
@@ -52,14 +52,14 @@ func TestPreview(t *testing.T) {
 		if err != nil {
 			t.Fatalf("read rsa fixture: %v", err)
 		}
-		if _, _, err := a.Keys.Import(rsaPEM, "a-rather-long-key-name-for-the-row", "", keystore.SourceBitwarden); err != nil {
+		if _, _, err := a.Keys.Import(rsaPEM, "a-rather-long-key-name-for-the-row", nil, keystore.SourceBitwarden); err != nil {
 			t.Fatalf("import rsa: %v", err)
 		}
 
 		// Locked page, at the size the app asks for on this platform.
 		unlockWidth, unlockHeight := a.LockedSize()
 		writePreview(t, out, mode+"-unlock", a, unlockWidth, unlockHeight, nil)
-		if err := a.Vault.Unlock("correct horse battery"); err != nil {
+		if err := a.Vault.Unlock([]byte("correct horse battery")); err != nil {
 			t.Fatalf("unlock: %v", err)
 		}
 		if err := a.Keys.Load(); err != nil {

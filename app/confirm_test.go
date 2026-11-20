@@ -31,7 +31,7 @@ func newConfirmer(t *testing.T) (*Confirmer, *policy.Engine, *auditlog.Log) {
 	if err != nil {
 		t.Fatalf("vault.Open: %v", err)
 	}
-	if err := v.Create("correct horse battery"); err != nil {
+	if err := v.Create([]byte("correct horse battery")); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	log, err := auditlog.Open(filepath.Join(t.TempDir(), "agent.log"))

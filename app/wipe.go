@@ -61,7 +61,8 @@ func (a *App) WipeData() {
 		a.showWipe = false
 		a.wipeStage = 0
 		a.wipeConfirm = ""
-		a.password, a.password2, a.unlockErr = "", "", ""
+		a.clearSensitiveState()
+		a.unlockErr = ""
 		// Nothing is left, so the unlock screen is the setup screen again.
 		a.status = a.t("status.wiped")
 		a.applyWindowSize()

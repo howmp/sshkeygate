@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/sshkeygate/sshkeygate/internal/memguard"
 )
 
 // AddKey stores a new key: the private key encrypted on its own, and its
@@ -21,7 +23,7 @@ func (v *Vault) AddKey(meta KeyMeta, privateKeyPEM []byte) error {
 	if len(encKey) == 0 {
 		return ErrLocked
 	}
-	defer zero(encKey)
+	defer memguard.Bytes(encKey)
 
 	blob, err := encrypt(privateKeyPEM, encKey)
 	if err != nil {
@@ -98,7 +100,7 @@ func (v *Vault) PrivateKey(id string) ([]byte, error) {
 	if !unlocked || len(encKey) == 0 {
 		return nil, ErrLocked
 	}
-	defer zero(encKey)
+	defer memguard.Bytes(encKey)
 
 	raw, err := os.ReadFile(v.keyPath(id))
 	if err != nil {
@@ -116,7 +118,9 @@ func (v *Vault) PrivateKey(id string) ([]byte, error) {
 
 // ChangePassword re-encrypts the vault and every private key under a new
 // password. A failure part-way restores the previous state.
-func (v *Vault) ChangePassword(oldPassword, newPassword string) error {
+//
+// The caller owns both passwords and should wipe them when done.
+func (v *Vault) ChangePassword(oldPassword, newPassword []byte) error {
 	env, err := v.readFile()
 	if err != nil {
 		return err
@@ -126,7 +130,7 @@ func (v *Vault) ChangePassword(oldPassword, newPassword string) error {
 		return fmt.Errorf("密钥库盐值损坏: %w", err)
 	}
 	oldKey := deriveKey(oldPassword, v.device, salt)
-	defer zero(oldKey)
+	defer memguard.Bytes(oldKey)
 
 	cipherText, err := base64.StdEncoding.DecodeString(env.Vault)
 	if err != nil {
@@ -147,7 +151,15 @@ func (v *Vault) ChangePassword(oldPassword, newPassword string) error {
 		return err
 	}
 	newKey := deriveKey(newPassword, v.device, newSalt)
-	defer zero(newKey)
+	// The vault takes ownership of newKey once it is installed; until then
+	// this defer must clear it, and it must not run after success or it would
+	// wipe the key the vault is using.
+	owned := true
+	defer func() {
+		if owned {
+			memguard.Bytes(newKey)
+		}
+	}()
 
 	newPrivate := make(map[string]string, len(keys))
 	oldPrivate := make(map[string]string, len(keys))
@@ -169,7 +181,7 @@ func (v *Vault) ChangePassword(oldPassword, newPassword string) error {
 			return fmt.Errorf("私钥解密失败 %s: %w", k.ID, err)
 		}
 		reenc, err := encrypt(plain, newKey)
-		zero(plain)
+		memguard.Bytes(plain)
 		if err != nil {
 			return err
 		}
@@ -199,30 +211,48 @@ func (v *Vault) ChangePassword(oldPassword, newPassword string) error {
 	}
 
 	v.mu.Lock()
-	oldEncKey := v.encKey
+	oldEncKey, oldLocked := v.encKey, v.keyLocked
 	v.encKey = newKey
 	v.salt = newSalt
+	v.keyLocked = memguard.Lock(newKey) == nil
 	v.mu.Unlock()
+
+	restore := func() {
+		v.mu.Lock()
+		if v.keyLocked {
+			memguard.Unlock(v.encKey)
+		}
+		v.encKey = oldEncKey
+		v.keyLocked = oldLocked
+		v.mu.Unlock()
+	}
 
 	vaultBlob, err := v.resealLocked(newKey, newSalt)
 	if err != nil {
 		rollback()
-		v.mu.Lock()
-		v.encKey = oldEncKey
-		v.mu.Unlock()
+		restore()
 		return err
 	}
 	if err := writeAtomic(v.vaultPath(), vaultBlob); err != nil {
 		rollback()
-		v.mu.Lock()
-		v.encKey = oldEncKey
-		v.mu.Unlock()
+		restore()
 		return err
 	}
 	if err := os.Remove(v.migratePath()); err != nil && !errors.Is(err, os.ErrNotExist) {
+		// The new password is already live on disk and in memory; keeping it
+		// usable is safer than wiping the key the vault now depends on.
+		if oldLocked {
+			memguard.Unlock(oldEncKey)
+		}
+		memguard.Bytes(oldEncKey)
+		owned = false
 		return err
 	}
-	zero(oldEncKey)
+	if oldLocked {
+		memguard.Unlock(oldEncKey)
+	}
+	memguard.Bytes(oldEncKey)
+	owned = false
 	return nil
 }
 
@@ -236,7 +266,7 @@ func (v *Vault) resealLocked(key, salt []byte) ([]byte, error) {
 		return nil, err
 	}
 	blob, err := encrypt(body, key)
-	zero(body)
+	memguard.Bytes(body)
 	if err != nil {
 		return nil, err
 	}
@@ -314,12 +344,12 @@ func (v *Vault) saveLocked() error {
 	if len(key) == 0 {
 		return ErrLocked
 	}
-	defer zero(key)
+	defer memguard.Bytes(key)
 	if err != nil {
 		return err
 	}
 	blob, err := encrypt(body, key)
-	zero(body)
+	memguard.Bytes(body)
 	if err != nil {
 		return err
 	}
@@ -410,11 +440,4 @@ func mustJSON(v any) []byte {
 		panic(err)
 	}
 	return b
-}
-
-// zero overwrites b in place.
-func zero(b []byte) {
-	for i := range b {
-		b[i] = 0
-	}
 }

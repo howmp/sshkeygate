@@ -11,22 +11,26 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/sshkeygate/sshkeygate/internal/memguard"
 )
 
 // ClientVersion is sent so Vaultwarden returns the SSH key fields.
 const ClientVersion = "2025.1.0"
 
-// Config is what the user types on the import page.
+// Config is what the user types on the import page. The caller owns Password
+// and should wipe its own copy after New.
 type Config struct {
 	ServerURL string
 	Email     string
-	Password  string
+	Password  []byte
 }
 
-// Item is one SSH key found in the vault.
+// Item is one SSH key found in the vault. The caller owns PrivateKey and
+// should wipe it after importing.
 type Item struct {
 	Name       string
-	PrivateKey string
+	PrivateKey []byte
 	Passphrase string
 	Algorithm  string
 	Enabled    bool
@@ -53,11 +57,18 @@ func New(cfg Config) *Client {
 		cfg: Config{
 			ServerURL: strings.TrimRight(strings.TrimSpace(cfg.ServerURL), "/"),
 			Email:     strings.TrimSpace(cfg.Email),
-			Password:  cfg.Password,
+			Password:  append([]byte(nil), cfg.Password...),
 		},
 		http:   &http.Client{Timeout: 60 * time.Second},
 		device: uuid.NewString(),
 	}
+}
+
+// Forget wipes the password the client holds. Call it once the login and sync
+// are done.
+func (c *Client) Forget() {
+	memguard.Bytes(c.cfg.Password)
+	c.cfg.Password = nil
 }
 
 // Login runs prelogin and the password grant.
@@ -138,10 +149,12 @@ func (c *Client) prelogin() (Kdf, error) {
 // Sync fetches the vault and returns its SSH keys.
 func (c *Client) Sync(session *Session) ([]Item, error) {
 	stretched := session.Kdf.StretchedKey(c.cfg.Password, c.cfg.Email)
+	defer memguard.Bytes(stretched)
 	key, err := UnlockSymmetricKey(session.EncryptedKey, stretched)
 	if err != nil {
 		return nil, fmt.Errorf("无法解开账户密钥: %w", err)
 	}
+	defer func() { memguard.Bytes(key) }()
 
 	req, err := http.NewRequest(http.MethodGet, c.cfg.ServerURL+"/api/sync", nil)
 	if err != nil {
@@ -177,6 +190,7 @@ func (c *Client) Sync(session *Session) ([]Item, error) {
 	// precedence over the one from the login response.
 	if sync.Profile.Key != "" {
 		if expanded, err := UnlockSymmetricKey(sync.Profile.Key, stretched); err == nil {
+			memguard.Bytes(key)
 			key = expanded
 		}
 	}
@@ -214,18 +228,29 @@ func decryptSSHCipher(ct cipherRecord, key []byte) (Item, bool) {
 	if ct.Key != "" {
 		if expanded, err := UnlockSymmetricKey(ct.Key, key); err == nil {
 			decryptKey = expanded
+			defer memguard.Bytes(expanded)
 		}
 	}
 	if ct.Name == "" || ct.SSHKey == nil || ct.SSHKey.PrivateKey == "" {
 		return Item{}, false
 	}
 
-	for _, candidate := range [][]byte{decryptKey, SwapKeyHalves(decryptKey)} {
+	candidates := [][]byte{decryptKey}
+	if len(decryptKey) == 64 {
+		swapped := SwapKeyHalves(decryptKey)
+		defer memguard.Bytes(swapped)
+		candidates = append(candidates, swapped)
+	}
+	for _, candidate := range candidates {
 		name, err := DecryptString(ct.Name, candidate)
 		if err != nil {
 			continue
 		}
-		privateKey, err := DecryptString(ct.SSHKey.PrivateKey, candidate)
+		enc, err := ParseEncString(ct.SSHKey.PrivateKey)
+		if err != nil {
+			continue
+		}
+		privateKey, err := enc.Decrypt(candidate)
 		if err != nil {
 			continue
 		}

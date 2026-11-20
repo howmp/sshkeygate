@@ -15,6 +15,7 @@ import (
 	"github.com/sshkeygate/sshkeygate/internal/agent"
 	"github.com/sshkeygate/sshkeygate/internal/auditlog"
 	"github.com/sshkeygate/sshkeygate/internal/keystore"
+	"github.com/sshkeygate/sshkeygate/internal/memguard"
 	"github.com/sshkeygate/sshkeygate/internal/policy"
 	"github.com/sshkeygate/sshkeygate/internal/vault"
 )
@@ -31,6 +32,8 @@ func main() {
 	// named after the app.
 	mygo.App.SetName("sshkeygate")
 	mygo.App.SetVersion(strings.TrimPrefix(version, "v"))
+	// Harden the process before any key material enters memory.
+	memguard.HardenProcess()
 	// Declare the interface languages, so the app follows the user's preferred
 	// one instead of falling back to MyGo's English-only default.
 	mygo.App.SetLanguages("zh", "en")

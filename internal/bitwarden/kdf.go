@@ -9,6 +9,8 @@ import (
 
 	"golang.org/x/crypto/argon2"
 	"golang.org/x/crypto/pbkdf2"
+
+	"github.com/sshkeygate/sshkeygate/internal/memguard"
 )
 
 // KdfType selects the key derivation function of an account.
@@ -42,28 +44,33 @@ func (k Kdf) normalize() Kdf {
 	return k
 }
 
-// masterKey derives the 32-byte master key from the password.
-func (k Kdf) masterKey(password, email string) []byte {
+// masterKey derives the 32-byte master key from the password. The caller owns
+// the returned key and should wipe it.
+func (k Kdf) masterKey(password []byte, email string) []byte {
 	salt := []byte(strings.ToLower(strings.TrimSpace(email)))
 	if k.Type == KdfArgon2id {
-		return argon2.IDKey([]byte(password), salt, uint32(k.Iterations), uint32(k.Memory), uint8(k.Parallelism), 32)
+		return argon2.IDKey(password, salt, uint32(k.Iterations), uint32(k.Memory), uint8(k.Parallelism), 32)
 	}
-	return pbkdf2.Key([]byte(password), salt, k.Iterations, 32, sha256.New)
+	return pbkdf2.Key(password, salt, k.Iterations, 32, sha256.New)
 }
 
 // PasswordHash derives the value the login form sends as the password.
-func (k Kdf) PasswordHash(password, email string) string {
+func (k Kdf) PasswordHash(password []byte, email string) string {
 	master := k.masterKey(password, email)
+	defer memguard.Bytes(master)
 	// PBKDF2 with one iteration: HMAC(master, password || 0x00000001).
 	mac := hmac.New(sha256.New, master)
-	mac.Write([]byte(password))
+	mac.Write(password)
 	mac.Write([]byte{0, 0, 0, 1})
 	return base64.StdEncoding.EncodeToString(mac.Sum(nil))
 }
 
-// StretchedKey derives the 64-byte key that decrypts the vault.
-func (k Kdf) StretchedKey(password, email string) []byte {
-	return ExpandKey(k.masterKey(password, email))
+// StretchedKey derives the 64-byte key that decrypts the vault. The caller
+// owns the returned key and should wipe it.
+func (k Kdf) StretchedKey(password []byte, email string) []byte {
+	master := k.masterKey(password, email)
+	defer memguard.Bytes(master)
+	return ExpandKey(master)
 }
 
 // ParseKdf reads a prelogin response body.

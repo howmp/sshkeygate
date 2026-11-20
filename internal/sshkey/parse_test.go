@@ -1,9 +1,14 @@
 package sshkey
 
 import (
+	"bytes"
 	"crypto"
+	"crypto/ecdsa"
+	"crypto/ed25519"
+	"crypto/rsa"
 	"encoding/base64"
 	"encoding/pem"
+	"math/big"
 	"os"
 	"path/filepath"
 	"strings"
@@ -28,7 +33,7 @@ func readFixture(t *testing.T, name string) []byte {
 }
 
 func TestEd25519Fixture(t *testing.T) {
-	key, err := Parse(readFixture(t, "id_ed25519_bwagent"), "")
+	key, err := Parse(readFixture(t, "id_ed25519_bwagent"), nil)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
@@ -43,7 +48,7 @@ func TestEd25519Fixture(t *testing.T) {
 // TestEd25519FixtureMatchesPublicKey checks a key file against the .pub file
 // generated with it, the cross-check a user gets from ssh-keygen.
 func TestEd25519FixtureMatchesPublicKey(t *testing.T) {
-	key, err := Parse(readFixture(t, "id_ed25519"), "")
+	key, err := Parse(readFixture(t, "id_ed25519"), nil)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
@@ -61,7 +66,7 @@ func TestEd25519FixtureMatchesPublicKey(t *testing.T) {
 }
 
 func TestRSAFixture(t *testing.T) {
-	key, err := Parse(readFixture(t, "id_rsa"), "")
+	key, err := Parse(readFixture(t, "id_rsa"), nil)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
@@ -80,7 +85,7 @@ func TestRSAFixture(t *testing.T) {
 }
 
 func TestRSASignatureFlags(t *testing.T) {
-	key, err := Parse(readFixture(t, "id_rsa"), "")
+	key, err := Parse(readFixture(t, "id_rsa"), nil)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
@@ -108,7 +113,7 @@ func TestRSASignatureFlags(t *testing.T) {
 }
 
 func TestEd25519RejectsFlags(t *testing.T) {
-	key, err := Parse(readFixture(t, "id_ed25519"), "")
+	key, err := Parse(readFixture(t, "id_ed25519"), nil)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
@@ -118,16 +123,16 @@ func TestEd25519RejectsFlags(t *testing.T) {
 }
 
 func TestParseRejectsEmptyAndGarbage(t *testing.T) {
-	if _, err := Parse(nil, ""); err == nil {
+	if _, err := Parse(nil, nil); err == nil {
 		t.Error("Parse(nil) succeeded, want error")
 	}
-	if _, err := Parse([]byte("not a key"), ""); err == nil {
+	if _, err := Parse([]byte("not a key"), nil); err == nil {
 		t.Error("Parse(garbage) succeeded, want error")
 	}
 }
 
 func TestIsEncryptedAndPassphraseRoundTrip(t *testing.T) {
-	plain, err := Parse(readFixture(t, "id_ed25519"), "")
+	plain, err := Parse(readFixture(t, "id_ed25519"), nil)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
@@ -141,14 +146,14 @@ func TestIsEncryptedAndPassphraseRoundTrip(t *testing.T) {
 	if !IsEncrypted(encrypted) {
 		t.Fatal("IsEncrypted = false for an encrypted key")
 	}
-	if _, err := Parse(encrypted, ""); err == nil {
+	if _, err := Parse(encrypted, nil); err == nil {
 		t.Error("Parse without passphrase succeeded, want error")
 	}
-	if _, err := Parse(encrypted, "wrong"); err == nil {
+	if _, err := Parse(encrypted, []byte("wrong")); err == nil {
 		t.Error("Parse with wrong passphrase succeeded, want error")
 	}
 
-	unlocked, err := Parse(encrypted, "hunter2")
+	unlocked, err := Parse(encrypted, []byte("hunter2"))
 	if err != nil {
 		t.Fatalf("Parse with passphrase: %v", err)
 	}
@@ -158,8 +163,121 @@ func TestIsEncryptedAndPassphraseRoundTrip(t *testing.T) {
 	if IsEncrypted(unlocked.PEM) {
 		t.Error("stored PEM is still encrypted; signing would need the passphrase")
 	}
-	if _, err := Parse(unlocked.PEM, ""); err != nil {
+	if _, err := Parse(unlocked.PEM, nil); err != nil {
 		t.Errorf("re-parsing the stored PEM failed: %v", err)
+	}
+}
+
+// TestParseCopiesInput checks the parsed key does not alias the caller's
+// buffer: wiping the input afterwards must not damage the stored PEM.
+func TestParseCopiesInput(t *testing.T) {
+	pemBytes := readFixture(t, "id_ed25519")
+	key, err := Parse(pemBytes, nil)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	defer key.Wipe()
+	want := append([]byte(nil), key.PEM...)
+	for i := range pemBytes {
+		pemBytes[i] = 'X'
+	}
+	if !bytes.Equal(key.PEM, want) {
+		t.Error("Key.PEM aliases the caller's buffer")
+	}
+}
+
+// TestWipeZeroesEd25519 checks the parsed key material and PEM are overwritten
+// and the signer is dropped.
+func TestWipeZeroesEd25519(t *testing.T) {
+	key, err := Parse(readFixture(t, "id_ed25519"), nil)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	raw, ok := key.raw.(*ed25519.PrivateKey)
+	if !ok {
+		t.Fatalf("raw type = %T, want *ed25519.PrivateKey", key.raw)
+	}
+	pemBytes := key.PEM
+	if len(*raw) == 0 || len(pemBytes) == 0 {
+		t.Fatal("no key material to wipe")
+	}
+
+	key.Wipe()
+
+	for i, b := range *raw {
+		if b != 0 {
+			t.Fatalf("private key byte %d = %d after Wipe, want 0", i, b)
+		}
+	}
+	for i, b := range pemBytes {
+		if b != 0 {
+			t.Fatalf("PEM byte %d = %d after Wipe, want 0", i, b)
+		}
+	}
+	if key.raw != nil || key.PEM != nil || key.signer != nil || key.sshKey != nil {
+		t.Error("Wipe left a field set")
+	}
+	key.Wipe() // Idempotent.
+}
+
+// TestWipeZeroesRSA checks the private exponent, primes and the CRT values
+// rsa.Sign fills in are all cleared.
+func TestWipeZeroesRSA(t *testing.T) {
+	key, err := Parse(readFixture(t, "id_rsa"), nil)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	priv, ok := key.raw.(*rsa.PrivateKey)
+	if !ok {
+		t.Fatalf("raw type = %T, want *rsa.PrivateKey", key.raw)
+	}
+	// Signing populates Precomputed, which also holds private material.
+	if _, err := key.Sign([]byte("populate precomputed"), FlagRsaSha256); err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
+	d := priv.D
+	primes := append([]*big.Int(nil), priv.Primes...)
+	dp, dq, qinv := priv.Precomputed.Dp, priv.Precomputed.Dq, priv.Precomputed.Qinv
+	crt := append([]rsa.CRTValue(nil), priv.Precomputed.CRTValues...)
+
+	key.Wipe()
+
+	if d.Sign() != 0 {
+		t.Errorf("D = %s after Wipe, want 0", d)
+	}
+	for i, p := range primes {
+		if p.Sign() != 0 {
+			t.Errorf("prime %d = %s after Wipe, want 0", i, p)
+		}
+	}
+	for name, v := range map[string]*big.Int{"Dp": dp, "Dq": dq, "Qinv": qinv} {
+		if v != nil && v.Sign() != 0 {
+			t.Errorf("%s = %s after Wipe, want 0", name, v)
+		}
+	}
+	for i, c := range crt {
+		for name, v := range map[string]*big.Int{"Exp": c.Exp, "Coeff": c.Coeff, "R": c.R} {
+			if v != nil && v.Sign() != 0 {
+				t.Errorf("CRT[%d].%s = %s after Wipe, want 0", i, name, v)
+			}
+		}
+	}
+}
+
+func TestWipeSupportedTypes(t *testing.T) {
+	var ed ed25519.PrivateKey
+	for _, raw := range []crypto.PrivateKey{
+		&rsa.PrivateKey{},
+		&ecdsa.PrivateKey{},
+		&ed,
+		ed,
+	} {
+		if !wipeSupported(raw) {
+			t.Errorf("%T should be wipeable", raw)
+		}
+	}
+	if wipeSupported("not a key") {
+		t.Error("an unknown type was reported as wipeable")
 	}
 }
 

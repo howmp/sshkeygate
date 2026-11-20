@@ -9,6 +9,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/sshkeygate/sshkeygate/internal/memguard"
 )
 
 // EncString is a Bitwarden encrypted string of type 2:
@@ -91,15 +93,20 @@ func DecryptString(s string, key []byte) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	defer memguard.Bytes(plain)
 	return string(plain), nil
 }
 
 // ExpandKey turns a 32-byte key into the 64-byte form: HKDF-Expand with info
 // "enc" and "mac" and an empty salt, as Bitwarden does.
 func ExpandKey(key32 []byte) []byte {
+	enc := hkdfExpand(key32, []byte("enc"))
+	mac := hkdfExpand(key32, []byte("mac"))
 	out := make([]byte, 0, 64)
-	out = append(out, hkdfExpand(key32, []byte("enc"))...)
-	out = append(out, hkdfExpand(key32, []byte("mac"))...)
+	out = append(out, enc...)
+	out = append(out, mac...)
+	memguard.Bytes(enc)
+	memguard.Bytes(mac)
 	return out
 }
 
@@ -112,20 +119,24 @@ func hkdfExpand(prk, info []byte) []byte {
 }
 
 // UnlockSymmetricKey decrypts an encrypted symmetric key and returns it in its
-// 64-byte form.
+// 64-byte form. The caller owns the returned slice and should wipe it.
 func UnlockSymmetricKey(encryptedKey string, stretchedKey []byte) ([]byte, error) {
-	raw, err := DecryptString(encryptedKey, stretchedKey)
+	enc, err := ParseEncString(encryptedKey)
 	if err != nil {
 		return nil, err
 	}
-	key := []byte(raw)
-	switch len(key) {
+	plain, err := enc.Decrypt(stretchedKey)
+	if err != nil {
+		return nil, err
+	}
+	defer memguard.Bytes(plain)
+	switch len(plain) {
 	case 64:
-		return key, nil
+		return append([]byte(nil), plain...), nil
 	case 32:
-		return ExpandKey(key), nil
+		return ExpandKey(plain), nil
 	default:
-		return nil, fmt.Errorf("无效的 SymmetricCryptoKey 长度: %d", len(key))
+		return nil, fmt.Errorf("无效的 SymmetricCryptoKey 长度: %d", len(plain))
 	}
 }
 

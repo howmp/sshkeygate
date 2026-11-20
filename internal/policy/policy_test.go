@@ -32,7 +32,7 @@ func newEngine(t *testing.T) *Engine {
 	if err != nil {
 		t.Fatalf("vault.Open: %v", err)
 	}
-	if err := v.Create("correct horse battery"); err != nil {
+	if err := v.Create([]byte("correct horse battery")); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	return New(v)

@@ -1,11 +1,14 @@
 package vault
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/sshkeygate/sshkeygate/internal/memguard"
 )
 
 // memSecrets is an in-memory SecretStore, standing in for the credential
@@ -60,7 +63,7 @@ func sampleMeta() KeyMeta {
 // the vault and every key file go, and a new vault can be made in its place.
 func TestDestroyRemovesEverything(t *testing.T) {
 	v, dir := newTestVault(t)
-	if err := v.Create("a password to forget"); err != nil {
+	if err := v.Create([]byte("a password to forget")); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	if err := v.AddKey(sampleMeta(), []byte("pem")); err != nil {
@@ -91,11 +94,11 @@ func TestDestroyRemovesEverything(t *testing.T) {
 	}
 
 	// The same Vault object must be usable for the next vault.
-	if err := v.Create("a different password"); err != nil {
+	if err := v.Create([]byte("a different password")); err != nil {
 		t.Fatalf("Create after Destroy: %v", err)
 	}
 	v.Lock()
-	if err := v.Unlock("a different password"); err != nil {
+	if err := v.Unlock([]byte("a different password")); err != nil {
 		t.Fatalf("Unlock the new vault: %v", err)
 	}
 }
@@ -105,7 +108,7 @@ func TestCreateUnlockLock(t *testing.T) {
 	if v.Exists() {
 		t.Fatal("Exists = true before Create")
 	}
-	if err := v.Create("correct horse battery"); err != nil {
+	if err := v.Create([]byte("correct horse battery")); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	if !v.Exists() || !v.IsUnlocked() {
@@ -119,10 +122,10 @@ func TestCreateUnlockLock(t *testing.T) {
 	if v.IsUnlocked() {
 		t.Fatal("IsUnlocked = true after Lock")
 	}
-	if err := v.Unlock("wrong password"); !errors.Is(err, ErrWrongPassword) {
+	if err := v.Unlock([]byte("wrong password")); !errors.Is(err, ErrWrongPassword) {
 		t.Errorf("Unlock(wrong) = %v, want ErrWrongPassword", err)
 	}
-	if err := v.Unlock("correct horse battery"); err != nil {
+	if err := v.Unlock([]byte("correct horse battery")); err != nil {
 		t.Fatalf("Unlock: %v", err)
 	}
 	if !v.IsUnlocked() {
@@ -132,7 +135,7 @@ func TestCreateUnlockLock(t *testing.T) {
 
 func TestPrivateKeyRequiresUnlock(t *testing.T) {
 	v, _ := newTestVault(t)
-	if err := v.Create("correct horse battery"); err != nil {
+	if err := v.Create([]byte("correct horse battery")); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	if err := v.AddKey(sampleMeta(), []byte("-----BEGIN PRIVATE KEY-----\n")); err != nil {
@@ -146,7 +149,7 @@ func TestPrivateKeyRequiresUnlock(t *testing.T) {
 	if string(plain) != "-----BEGIN PRIVATE KEY-----\n" {
 		t.Errorf("PrivateKey = %q", plain)
 	}
-	zero(plain)
+	memguard.Bytes(plain)
 
 	v.Lock()
 	if _, err := v.PrivateKey("key-1"); !errors.Is(err, ErrLocked) {
@@ -156,7 +159,7 @@ func TestPrivateKeyRequiresUnlock(t *testing.T) {
 
 func TestPrivateKeyIsEncryptedAtRest(t *testing.T) {
 	v, dir := newTestVault(t)
-	if err := v.Create("correct horse battery"); err != nil {
+	if err := v.Create([]byte("correct horse battery")); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	secret := []byte("super-secret-key-material")
@@ -174,7 +177,7 @@ func TestPrivateKeyIsEncryptedAtRest(t *testing.T) {
 
 func TestRemoveKey(t *testing.T) {
 	v, dir := newTestVault(t)
-	if err := v.Create("correct horse battery"); err != nil {
+	if err := v.Create([]byte("correct horse battery")); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	if err := v.AddKey(sampleMeta(), []byte("pem")); err != nil {
@@ -193,25 +196,25 @@ func TestRemoveKey(t *testing.T) {
 
 func TestChangePassword(t *testing.T) {
 	v, _ := newTestVault(t)
-	if err := v.Create("old password 123"); err != nil {
+	if err := v.Create([]byte("old password 123")); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	if err := v.AddKey(sampleMeta(), []byte("pem-body")); err != nil {
 		t.Fatalf("AddKey: %v", err)
 	}
 
-	if err := v.ChangePassword("wrong", "new password 456"); !errors.Is(err, ErrWrongPassword) {
+	if err := v.ChangePassword([]byte("wrong"), []byte("new password 456")); !errors.Is(err, ErrWrongPassword) {
 		t.Errorf("ChangePassword(wrong) = %v, want ErrWrongPassword", err)
 	}
-	if err := v.ChangePassword("old password 123", "new password 456"); err != nil {
+	if err := v.ChangePassword([]byte("old password 123"), []byte("new password 456")); err != nil {
 		t.Fatalf("ChangePassword: %v", err)
 	}
 
 	v.Lock()
-	if err := v.Unlock("old password 123"); !errors.Is(err, ErrWrongPassword) {
+	if err := v.Unlock([]byte("old password 123")); !errors.Is(err, ErrWrongPassword) {
 		t.Errorf("Unlock with the old password = %v, want ErrWrongPassword", err)
 	}
-	if err := v.Unlock("new password 456"); err != nil {
+	if err := v.Unlock([]byte("new password 456")); err != nil {
 		t.Fatalf("Unlock with the new password: %v", err)
 	}
 	plain, err := v.PrivateKey("key-1")
@@ -223,11 +226,89 @@ func TestChangePassword(t *testing.T) {
 	}
 }
 
+// TestChangePasswordKeepsWorkingKey is the regression for ChangePassword
+// zeroing the key the vault had just installed: signing and saving must keep
+// working immediately after the change, and the new password must open the
+// vault after a save.
+func TestChangePasswordKeepsWorkingKey(t *testing.T) {
+	v, dir, secrets := newTestVaultWithSecrets(t)
+	if err := v.Create([]byte("old password 123")); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := v.AddKey(sampleMeta(), []byte("pem-body")); err != nil {
+		t.Fatalf("AddKey: %v", err)
+	}
+	if err := v.ChangePassword([]byte("old password 123"), []byte("new password 456")); err != nil {
+		t.Fatalf("ChangePassword: %v", err)
+	}
+
+	// No Lock/Unlock: the in-memory key must still be the one just installed.
+	plain, err := v.PrivateKey("key-1")
+	if err != nil {
+		t.Fatalf("PrivateKey right after ChangePassword: %v", err)
+	}
+	if string(plain) != "pem-body" {
+		t.Errorf("PrivateKey = %q", plain)
+	}
+	memguard.Bytes(plain)
+	if len(v.encKey) == 0 || bytes.Equal(v.encKey, make([]byte, len(v.encKey))) {
+		t.Fatal("the in-memory vault key was wiped by ChangePassword")
+	}
+
+	// A save re-encrypts vault.json with that key; the next process must be
+	// able to open it with the new password.
+	s := v.Settings()
+	s.ConfirmTimeoutSeconds = 45
+	if err := v.UpdateSettings(s); err != nil {
+		t.Fatalf("UpdateSettings after ChangePassword: %v", err)
+	}
+
+	reopened, err := Open(dir, secrets)
+	if err != nil {
+		t.Fatalf("Open after the change: %v", err)
+	}
+	if err := reopened.Unlock([]byte("new password 456")); err != nil {
+		t.Fatalf("Unlock with the new password after a save: %v", err)
+	}
+	plain, err = reopened.PrivateKey("key-1")
+	if err != nil {
+		t.Fatalf("PrivateKey after reopening: %v", err)
+	}
+	if string(plain) != "pem-body" {
+		t.Errorf("PrivateKey = %q after reopening", plain)
+	}
+}
+
+// TestLockWipesInMemoryKey checks locking clears the key buffer in place and
+// drops the lock state.
+func TestLockWipesInMemoryKey(t *testing.T) {
+	v, _ := newTestVault(t)
+	if err := v.Create([]byte("correct horse battery")); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	key := v.encKey
+	if len(key) == 0 {
+		t.Fatal("no in-memory key after Create")
+	}
+	v.Lock()
+	for i, b := range key {
+		if b != 0 {
+			t.Fatalf("key byte %d = %d after Lock, want 0", i, b)
+		}
+	}
+	if v.encKey != nil {
+		t.Error("encKey was not dropped")
+	}
+	if v.keyLocked {
+		t.Error("keyLocked survived Lock")
+	}
+}
+
 // TestInterruptedChangeRecovers simulates a crash after private keys were
 // re-encrypted but before vault.json was rewritten.
 func TestInterruptedChangeRecovers(t *testing.T) {
 	v, dir, secrets := newTestVaultWithSecrets(t)
-	if err := v.Create("old password 123"); err != nil {
+	if err := v.Create([]byte("old password 123")); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	if err := v.AddKey(sampleMeta(), []byte("pem-body")); err != nil {
@@ -265,7 +346,7 @@ func TestInterruptedChangeRecovers(t *testing.T) {
 	if _, err := os.Stat(reopened.migratePath()); !errors.Is(err, os.ErrNotExist) {
 		t.Error("migration file still exists after recovery")
 	}
-	if err := reopened.Unlock("old password 123"); err != nil {
+	if err := reopened.Unlock([]byte("old password 123")); err != nil {
 		t.Fatalf("Unlock after recovery: %v", err)
 	}
 	plain, err := reopened.PrivateKey("key-1")
@@ -279,7 +360,7 @@ func TestInterruptedChangeRecovers(t *testing.T) {
 
 func TestSettingsRoundTrip(t *testing.T) {
 	v, _ := newTestVault(t)
-	if err := v.Create("correct horse battery"); err != nil {
+	if err := v.Create([]byte("correct horse battery")); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	s := DefaultSettings()
@@ -290,7 +371,7 @@ func TestSettingsRoundTrip(t *testing.T) {
 		t.Fatalf("UpdateSettings: %v", err)
 	}
 	v.Lock()
-	if err := v.Unlock("correct horse battery"); err != nil {
+	if err := v.Unlock([]byte("correct horse battery")); err != nil {
 		t.Fatalf("Unlock: %v", err)
 	}
 	got := v.Settings()
@@ -301,7 +382,7 @@ func TestSettingsRoundTrip(t *testing.T) {
 
 func TestTrustedProgramsRoundTrip(t *testing.T) {
 	v, _ := newTestVault(t)
-	if err := v.Create("correct horse battery"); err != nil {
+	if err := v.Create([]byte("correct horse battery")); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	want := []TrustedProgram{
@@ -311,7 +392,7 @@ func TestTrustedProgramsRoundTrip(t *testing.T) {
 		t.Fatalf("SetTrustedPrograms: %v", err)
 	}
 	v.Lock()
-	if err := v.Unlock("correct horse battery"); err != nil {
+	if err := v.Unlock([]byte("correct horse battery")); err != nil {
 		t.Fatalf("Unlock: %v", err)
 	}
 	got := v.TrustedPrograms()

@@ -39,7 +39,7 @@ func newTestApp(t *testing.T, createVault bool) *App {
 		t.Fatalf("vault.Open: %v", err)
 	}
 	if createVault {
-		if err := v.Create("correct horse battery"); err != nil {
+		if err := v.Create([]byte("correct horse battery")); err != nil {
 			t.Fatalf("Create: %v", err)
 		}
 	}

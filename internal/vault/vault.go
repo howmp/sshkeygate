@@ -19,6 +19,8 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+
+	"github.com/sshkeygate/sshkeygate/internal/memguard"
 )
 
 // ErrLocked is returned by operations that need an unlocked vault.
@@ -111,12 +113,13 @@ type Vault struct {
 	dir     string
 	secrets SecretStore
 
-	mu       sync.RWMutex
-	device   []byte
-	salt     []byte
-	encKey   []byte
-	data     *payload
-	unlocked bool
+	mu        sync.RWMutex
+	device    []byte
+	salt      []byte
+	encKey    []byte
+	keyLocked bool
+	data      *payload
+	unlocked  bool
 }
 
 // Open prepares the vault in dir. It does not unlock it.
@@ -177,15 +180,21 @@ func (v *Vault) IsUnlocked() bool {
 	return v.unlocked
 }
 
-// Create initializes a new vault with password and unlocks it.
-func (v *Vault) Create(password string) error {
+// Create initializes a new vault with password and unlocks it. The caller
+// owns password and should wipe it when done.
+func (v *Vault) Create(password []byte) error {
 	salt := make([]byte, saltLen)
 	if _, err := rand.Read(salt); err != nil {
 		return err
 	}
 	v.mu.Lock()
+	if v.keyLocked {
+		memguard.Unlock(v.encKey)
+	}
+	memguard.Bytes(v.encKey)
 	v.salt = salt
 	v.encKey = deriveKey(password, v.device, salt)
+	v.keyLocked = memguard.Lock(v.encKey) == nil
 	v.data = &payload{Settings: DefaultSettings()}
 	v.unlocked = true
 	v.mu.Unlock()
@@ -193,7 +202,11 @@ func (v *Vault) Create(password string) error {
 	if err := v.saveLocked(); err != nil {
 		v.mu.Lock()
 		v.unlocked = false
-		zero(v.encKey)
+		if v.keyLocked {
+			memguard.Unlock(v.encKey)
+			v.keyLocked = false
+		}
+		memguard.Bytes(v.encKey)
 		v.encKey = nil
 		v.mu.Unlock()
 		return err
@@ -202,8 +215,8 @@ func (v *Vault) Create(password string) error {
 }
 
 // Unlock decrypts the vault, returning ErrWrongPassword when the password
-// does not open it.
-func (v *Vault) Unlock(password string) error {
+// does not open it. The caller owns password and should wipe it when done.
+func (v *Vault) Unlock(password []byte) error {
 	env, err := v.readFile()
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
@@ -218,21 +231,21 @@ func (v *Vault) Unlock(password string) error {
 	key := deriveKey(password, v.device, salt)
 	cipherText, err := base64.StdEncoding.DecodeString(env.Vault)
 	if err != nil {
-		zero(key)
+		memguard.Bytes(key)
 		return fmt.Errorf("密钥库数据损坏: %w", err)
 	}
 	plain, err := decrypt(cipherText, key)
 	if err != nil {
-		zero(key)
+		memguard.Bytes(key)
 		return ErrWrongPassword
 	}
 	var data payload
 	if err := json.Unmarshal(plain, &data); err != nil {
-		zero(key)
-		zero(plain)
+		memguard.Bytes(key)
+		memguard.Bytes(plain)
 		return fmt.Errorf("密钥库内容损坏: %w", err)
 	}
-	zero(plain)
+	memguard.Bytes(plain)
 	if data.Settings.ConfirmTimeoutSeconds == 0 {
 		data.Settings.ConfirmTimeoutSeconds = 30
 	}
@@ -247,9 +260,13 @@ func (v *Vault) Unlock(password string) error {
 	}
 
 	v.mu.Lock()
-	zero(v.encKey)
+	if v.keyLocked {
+		memguard.Unlock(v.encKey)
+	}
+	memguard.Bytes(v.encKey)
 	v.salt = salt
 	v.encKey = key
+	v.keyLocked = memguard.Lock(key) == nil
 	v.data = &data
 	v.unlocked = true
 	v.mu.Unlock()
@@ -260,7 +277,11 @@ func (v *Vault) Unlock(password string) error {
 func (v *Vault) Lock() {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	zero(v.encKey)
+	if v.keyLocked {
+		memguard.Unlock(v.encKey)
+		v.keyLocked = false
+	}
+	memguard.Bytes(v.encKey)
 	v.encKey = nil
 	v.data = &payload{Settings: DefaultSettings()}
 	v.unlocked = false
@@ -280,7 +301,11 @@ func (v *Vault) Destroy() error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
-	zero(v.encKey)
+	if v.keyLocked {
+		memguard.Unlock(v.encKey)
+		v.keyLocked = false
+	}
+	memguard.Bytes(v.encKey)
 	v.encKey = nil
 	v.salt = nil
 	v.data = &payload{Settings: DefaultSettings()}

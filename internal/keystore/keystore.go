@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/crypto/ssh"
 
+	"github.com/sshkeygate/sshkeygate/internal/memguard"
 	"github.com/sshkeygate/sshkeygate/internal/sshkey"
 	"github.com/sshkeygate/sshkeygate/internal/vault"
 )
@@ -112,11 +113,12 @@ func (s *Store) Locked() bool { return !s.v.IsUnlocked() }
 
 // Import parses privatePEM and stores it. A key with the same fingerprint is
 // reported as a duplicate rather than added twice.
-func (s *Store) Import(privatePEM []byte, name, passphrase string, source Source) (Key, bool, error) {
+func (s *Store) Import(privatePEM []byte, name string, passphrase []byte, source Source) (Key, bool, error) {
 	parsed, err := sshkey.Parse(privatePEM, passphrase)
 	if err != nil {
 		return Key{}, false, err
 	}
+	defer parsed.Wipe()
 	fingerprint := parsed.Fingerprint()
 
 	for _, existing := range s.Keys() {
@@ -190,16 +192,15 @@ func (s *Store) Sign(k Key, data []byte, flags uint32) (*ssh.Signature, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer zero(pemBytes)
+	defer memguard.Bytes(pemBytes)
 
-	parsed, err := sshkey.Parse(pemBytes, "")
+	parsed, err := sshkey.Parse(pemBytes, nil)
 	if err != nil {
 		return nil, err
 	}
-	// The parsed key keeps its own copy of the passphrase-free PEM, which is
-	// just as sensitive as the one from the vault; wipe it once the signature
-	// is made. The parsed signer's key material cannot be reached from here.
-	defer zero(parsed.PEM)
+	// Both the PEM copy Parse made and the parsed key material it holds are
+	// wiped once the signature is made.
+	defer parsed.Wipe()
 	sig, err := parsed.Sign(data, flags)
 	runtime.KeepAlive(parsed)
 	return sig, err
@@ -214,10 +215,4 @@ func bytesEqual(a, b []byte) bool {
 		diff |= a[i] ^ b[i]
 	}
 	return diff == 0
-}
-
-func zero(b []byte) {
-	for i := range b {
-		b[i] = 0
-	}
 }

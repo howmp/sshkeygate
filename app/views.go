@@ -10,6 +10,7 @@ import (
 	"github.com/egoist/mygo/ui"
 
 	"github.com/sshkeygate/sshkeygate/internal/keystore"
+	"github.com/sshkeygate/sshkeygate/internal/memguard"
 	"github.com/sshkeygate/sshkeygate/internal/policy"
 	"github.com/sshkeygate/sshkeygate/internal/vault"
 )
@@ -389,8 +390,12 @@ func (a *App) loadDroppedKey(path string) {
 		if err != nil {
 			return
 		}
+		// The text area needs a string, which Go cannot wipe; the byte copy
+		// can still be cleared before it is handed over.
+		text := string(raw)
+		memguard.Bytes(raw)
 		mygo.RunOnMain(func() {
-			a.textKey = string(raw)
+			a.textKey = text
 			if strings.TrimSpace(a.textName) == "" {
 				a.textName = baseName(path)
 			}

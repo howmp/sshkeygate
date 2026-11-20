@@ -143,12 +143,12 @@ func TestSwapKeyHalves(t *testing.T) {
 
 func TestPasswordHashIsStable(t *testing.T) {
 	k := Kdf{Type: KdfPBKDF2, Iterations: 600_000}.normalize()
-	first := k.PasswordHash("master-password", "user@example.com")
-	second := k.PasswordHash("master-password", "user@example.com")
+	first := k.PasswordHash([]byte("master-password"), "user@example.com")
+	second := k.PasswordHash([]byte("master-password"), "user@example.com")
 	if first != second {
 		t.Error("PasswordHash is not deterministic")
 	}
-	if first == k.PasswordHash("master-password", "other@example.com") {
+	if first == k.PasswordHash([]byte("master-password"), "other@example.com") {
 		t.Error("PasswordHash ignores the email")
 	}
 	if _, err := base64.StdEncoding.DecodeString(first); err != nil {
@@ -158,14 +158,14 @@ func TestPasswordHashIsStable(t *testing.T) {
 
 func TestPasswordHashNormalizesEmail(t *testing.T) {
 	k := Kdf{Type: KdfPBKDF2, Iterations: 1000}
-	if k.PasswordHash("pw", "  User@Example.COM ") != k.PasswordHash("pw", "user@example.com") {
+	if k.PasswordHash([]byte("pw"), "  User@Example.COM ") != k.PasswordHash([]byte("pw"), "user@example.com") {
 		t.Error("PasswordHash does not normalize the email")
 	}
 }
 
 func TestStretchedKeyLength(t *testing.T) {
 	k := Kdf{Type: KdfPBKDF2, Iterations: 1000}
-	if got := len(k.StretchedKey("pw", "user@example.com")); got != 64 {
+	if got := len(k.StretchedKey([]byte("pw"), "user@example.com")); got != 64 {
 		t.Errorf("StretchedKey length = %d, want 64", got)
 	}
 }
@@ -234,7 +234,7 @@ func TestDecryptSSHCipherSwappedHalves(t *testing.T) {
 	if item.Name != "my-key" {
 		t.Errorf("Name = %q, want my-key", item.Name)
 	}
-	if item.PrivateKey != "-----BEGIN KEY-----" {
+	if string(item.PrivateKey) != "-----BEGIN KEY-----" {
 		t.Errorf("PrivateKey = %q", item.PrivateKey)
 	}
 }

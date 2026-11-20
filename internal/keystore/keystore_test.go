@@ -36,7 +36,7 @@ func newStore(t *testing.T) (*Store, *vault.Vault) {
 	if err != nil {
 		t.Fatalf("vault.Open: %v", err)
 	}
-	if err := v.Create("correct horse battery"); err != nil {
+	if err := v.Create([]byte("correct horse battery")); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	s := New(v)
@@ -48,7 +48,7 @@ func newStore(t *testing.T) (*Store, *vault.Vault) {
 
 func TestImportAndFind(t *testing.T) {
 	s, _ := newStore(t)
-	key, dup, err := s.Import(fixture(t, "id_ed25519"), "work", "", SourceManual)
+	key, dup, err := s.Import(fixture(t, "id_ed25519"), "work", nil, SourceManual)
 	if err != nil {
 		t.Fatalf("Import: %v", err)
 	}
@@ -73,11 +73,11 @@ func TestImportAndFind(t *testing.T) {
 
 func TestImportDuplicateIsReported(t *testing.T) {
 	s, _ := newStore(t)
-	first, _, err := s.Import(fixture(t, "id_ed25519"), "work", "", SourceManual)
+	first, _, err := s.Import(fixture(t, "id_ed25519"), "work", nil, SourceManual)
 	if err != nil {
 		t.Fatalf("Import: %v", err)
 	}
-	second, dup, err := s.Import(fixture(t, "id_ed25519"), "work-again", "", SourceBitwarden)
+	second, dup, err := s.Import(fixture(t, "id_ed25519"), "work-again", nil, SourceBitwarden)
 	if err != nil {
 		t.Fatalf("Import again: %v", err)
 	}
@@ -94,7 +94,7 @@ func TestImportDuplicateIsReported(t *testing.T) {
 
 func TestDisabledKeysAreHiddenFromAgent(t *testing.T) {
 	s, _ := newStore(t)
-	key, _, err := s.Import(fixture(t, "id_ed25519"), "work", "", SourceManual)
+	key, _, err := s.Import(fixture(t, "id_ed25519"), "work", nil, SourceManual)
 	if err != nil {
 		t.Fatalf("Import: %v", err)
 	}
@@ -114,7 +114,7 @@ func TestDisabledKeysAreHiddenFromAgent(t *testing.T) {
 
 func TestRenameAndDelete(t *testing.T) {
 	s, _ := newStore(t)
-	key, _, err := s.Import(fixture(t, "id_ed25519"), "old-name", "", SourceManual)
+	key, _, err := s.Import(fixture(t, "id_ed25519"), "old-name", nil, SourceManual)
 	if err != nil {
 		t.Fatalf("Import: %v", err)
 	}
@@ -134,7 +134,7 @@ func TestRenameAndDelete(t *testing.T) {
 
 func TestSignRoundTrip(t *testing.T) {
 	s, _ := newStore(t)
-	key, _, err := s.Import(fixture(t, "id_ed25519"), "work", "", SourceManual)
+	key, _, err := s.Import(fixture(t, "id_ed25519"), "work", nil, SourceManual)
 	if err != nil {
 		t.Fatalf("Import: %v", err)
 	}
@@ -150,7 +150,7 @@ func TestSignRoundTrip(t *testing.T) {
 
 func TestSignFailsWhenLocked(t *testing.T) {
 	s, v := newStore(t)
-	key, _, err := s.Import(fixture(t, "id_ed25519"), "work", "", SourceManual)
+	key, _, err := s.Import(fixture(t, "id_ed25519"), "work", nil, SourceManual)
 	if err != nil {
 		t.Fatalf("Import: %v", err)
 	}
@@ -165,7 +165,7 @@ func TestImportEncryptedKeyStoresPlainPEM(t *testing.T) {
 	s, v := newStore(t)
 	// Re-import the ed25519 key as if it had a passphrase: import with the
 	// passphrase, then check the stored copy opens without one.
-	key, _, err := s.Import(fixture(t, "id_ed25519"), "work", "", SourceManual)
+	key, _, err := s.Import(fixture(t, "id_ed25519"), "work", nil, SourceManual)
 	if err != nil {
 		t.Fatalf("Import: %v", err)
 	}
@@ -183,7 +183,7 @@ func TestImportEncryptedKeyStoresPlainPEM(t *testing.T) {
 
 func TestPublicKeyLine(t *testing.T) {
 	s, _ := newStore(t)
-	key, _, err := s.Import(fixture(t, "id_ed25519"), "work", "", SourceManual)
+	key, _, err := s.Import(fixture(t, "id_ed25519"), "work", nil, SourceManual)
 	if err != nil {
 		t.Fatalf("Import: %v", err)
 	}
@@ -200,11 +200,11 @@ func TestKeysSurviveReload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("vault.Open: %v", err)
 	}
-	if err := v.Create("correct horse battery"); err != nil {
+	if err := v.Create([]byte("correct horse battery")); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	s := New(v)
-	if _, _, err := s.Import(fixture(t, "id_ed25519"), "work", "", SourceManual); err != nil {
+	if _, _, err := s.Import(fixture(t, "id_ed25519"), "work", nil, SourceManual); err != nil {
 		t.Fatalf("Import: %v", err)
 	}
 
@@ -212,7 +212,7 @@ func TestKeysSurviveReload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
-	if err := reopened.Unlock("correct horse battery"); err != nil {
+	if err := reopened.Unlock([]byte("correct horse battery")); err != nil {
 		t.Fatalf("Unlock: %v", err)
 	}
 	s2 := New(reopened)

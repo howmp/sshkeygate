@@ -73,7 +73,7 @@ func newFixture(t *testing.T, importKey bool) *fixtureSet {
 	if err != nil {
 		t.Fatalf("vault.Open: %v", err)
 	}
-	if err := v.Create("correct horse battery"); err != nil {
+	if err := v.Create([]byte("correct horse battery")); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	keys := keystore.New(v)
@@ -87,7 +87,7 @@ func newFixture(t *testing.T, importKey bool) *fixtureSet {
 	}
 	f := &fixtureSet{srv: New(keys, pol, log), keys: keys, pol: pol, vault: v}
 	if importKey {
-		key, _, err := keys.Import(fixture(t), testKeyName, "", keystore.SourceManual)
+		key, _, err := keys.Import(fixture(t), testKeyName, nil, keystore.SourceManual)
 		if err != nil {
 			t.Fatalf("Import: %v", err)
 		}

@@ -3,6 +3,7 @@
 package app
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
@@ -18,6 +19,7 @@ import (
 	"github.com/sshkeygate/sshkeygate/internal/auditlog"
 	"github.com/sshkeygate/sshkeygate/internal/bitwarden"
 	"github.com/sshkeygate/sshkeygate/internal/keystore"
+	"github.com/sshkeygate/sshkeygate/internal/memguard"
 	"github.com/sshkeygate/sshkeygate/internal/policy"
 	"github.com/sshkeygate/sshkeygate/internal/sshkey"
 	"github.com/sshkeygate/sshkeygate/internal/vault"
@@ -407,7 +409,9 @@ func (a *App) SubmitUnlock() {
 		return
 	}
 	a.runBusy(a.t("status.creating"), func() error {
-		if err := a.Vault.Create(a.password); err != nil {
+		password := []byte(a.password)
+		defer memguard.Bytes(password)
+		if err := a.Vault.Create(password); err != nil {
 			return err
 		}
 		return a.Keys.Load()
@@ -436,7 +440,9 @@ func (a *App) unlock() {
 	}
 	password := a.password
 	a.runBusy(a.t("status.unlocking"), func() error {
-		if err := a.Vault.Unlock(password); err != nil {
+		passwordBytes := []byte(password)
+		defer memguard.Bytes(passwordBytes)
+		if err := a.Vault.Unlock(passwordBytes); err != nil {
 			return err
 		}
 		return a.Keys.Load()
@@ -516,10 +522,26 @@ func (a *App) Lock() {
 	a.Vault.Lock()
 	a.Keys.Clear()
 	a.Policy.ResetSession()
+	a.clearSensitiveState()
 	a.status = a.t("status.locked")
 	a.applyWindowSize()
 	a.refreshTray()
 	a.notify()
+}
+
+// clearSensitiveState drops the passwords, key text and passphrases held in
+// UI state. Go strings cannot be wiped, but dropping the references is the
+// best the UI layer can do. It must be called on the main thread.
+func (a *App) clearSensitiveState() {
+	a.password, a.password2 = "", ""
+	a.oldPwd, a.newPwd, a.newPwd2 = "", "", ""
+	a.textKey, a.textPass = "", ""
+	a.bwPass = ""
+	for i := range a.scanFiles {
+		a.scanFiles[i].Passphrase = ""
+	}
+	a.showChange = false
+	a.changeErr = ""
 }
 
 // runBusy runs work off the main thread, then hands the result back on it.
@@ -653,7 +675,11 @@ func (a *App) ImportText() {
 		return
 	}
 	a.runBusy(a.t("status.importing"), func() error {
-		_, dup, err := a.Keys.Import([]byte(text), name, pass, keystore.SourceManual)
+		keyBytes := []byte(text)
+		defer memguard.Bytes(keyBytes)
+		passphrase := []byte(pass)
+		defer memguard.Bytes(passphrase)
+		_, dup, err := a.Keys.Import(keyBytes, name, passphrase, keystore.SourceManual)
 		if err != nil {
 			return err
 		}
@@ -758,19 +784,33 @@ func (a *App) ImportSelected() {
 	}
 	a.runBusy(a.t("status.importing"), func() error {
 		ok, failed := 0, 0
+		var imported []string
 		for _, j := range jobs {
 			raw, err := os.ReadFile(j.path)
 			if err != nil {
 				failed++
 				continue
 			}
-			if _, _, err := a.Keys.Import(raw, j.name, j.pass, keystore.SourceManual); err != nil {
+			passphrase := []byte(j.pass)
+			_, _, importErr := a.Keys.Import(raw, j.name, passphrase, keystore.SourceManual)
+			memguard.Bytes(passphrase)
+			memguard.Bytes(raw)
+			if importErr != nil {
 				failed++
 				continue
 			}
 			ok++
+			imported = append(imported, j.path)
 		}
 		mygo.RunOnMain(func() {
+			// A passphrase that worked does not need to stay in the UI state.
+			for _, path := range imported {
+				for i := range a.scanFiles {
+					if a.scanFiles[i].Path == path {
+						a.scanFiles[i].Passphrase = ""
+					}
+				}
+			}
 			a.status = a.tf("status.importDone", ok, failed)
 			// Leave the import page when something arrived, so the new keys
 			// are visible; stay when nothing did, where the page explains why.
@@ -792,7 +832,10 @@ func (a *App) SyncBitwarden() {
 		return
 	}
 	a.runBusy(a.t("status.signingIn"), func() error {
-		client := bitwarden.New(bitwarden.Config{ServerURL: server, Email: email, Password: pass})
+		password := []byte(pass)
+		client := bitwarden.New(bitwarden.Config{ServerURL: server, Email: email, Password: password})
+		memguard.Bytes(password)
+		defer client.Forget()
 		session, err := client.Login()
 		if err != nil {
 			return err
@@ -804,9 +847,13 @@ func (a *App) SyncBitwarden() {
 		imported, skipped := 0, 0
 		for _, item := range items {
 			if !item.Enabled {
+				memguard.Bytes(item.PrivateKey)
 				continue
 			}
-			key, dup, err := a.Keys.Import([]byte(item.PrivateKey), item.Name, item.Passphrase, keystore.SourceBitwarden)
+			passphrase := []byte(item.Passphrase)
+			key, dup, err := a.Keys.Import(item.PrivateKey, item.Name, passphrase, keystore.SourceBitwarden)
+			memguard.Bytes(passphrase)
+			memguard.Bytes(item.PrivateKey)
 			if err != nil || dup || key.Fingerprint == "" {
 				skipped++
 				continue
@@ -859,34 +906,45 @@ func scanKeys(dir string, existing []keystore.Key, labels scanLabels) ([]ScanFil
 			strings.HasPrefix(name, ".") && !strings.HasPrefix(name, "id_"):
 			continue
 		}
-		path := filepath.Join(dir, name)
-		raw, err := os.ReadFile(path)
-		if err != nil {
-			out = append(out, ScanFile{Path: path, Name: name, Err: labels.unreadable})
-			continue
+		if file, ok := scanKeyFile(filepath.Join(dir, name), name, known, labels); ok {
+			out = append(out, file)
 		}
-		if !strings.Contains(string(raw), "PRIVATE KEY-----") {
-			continue
-		}
-		file := ScanFile{Path: path, Name: name, Selected: true, Algorithm: labels.unparsed}
-		if sshkey.IsEncrypted(raw) {
-			file.NeedsPhrase = true
-			file.Algorithm = labels.encrypted
-			file.Selected = false
-		} else if parsed, err := sshkey.Parse(raw, ""); err != nil {
-			file.Err = err.Error()
-			file.Selected = false
-		} else {
-			file.Algorithm = parsed.Algorithm()
-			file.AlreadyIn = known[parsed.Fingerprint()]
-			if file.AlreadyIn {
-				file.Selected = false
-			}
-		}
-		out = append(out, file)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
+}
+
+// scanKeyFile reads one candidate and wipes every key copy it touched. The
+// boolean reports whether the file is a candidate at all.
+func scanKeyFile(path, name string, known map[string]bool, labels scanLabels) (ScanFile, bool) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return ScanFile{Path: path, Name: name, Err: labels.unreadable}, true
+	}
+	defer memguard.Bytes(raw)
+	if !bytes.Contains(raw, []byte("PRIVATE KEY-----")) {
+		return ScanFile{}, false
+	}
+	file := ScanFile{Path: path, Name: name, Selected: true, Algorithm: labels.unparsed}
+	if sshkey.IsEncrypted(raw) {
+		file.NeedsPhrase = true
+		file.Algorithm = labels.encrypted
+		file.Selected = false
+		return file, true
+	}
+	parsed, err := sshkey.Parse(raw, nil)
+	if err != nil {
+		file.Err = err.Error()
+		file.Selected = false
+		return file, true
+	}
+	defer parsed.Wipe()
+	file.Algorithm = parsed.Algorithm()
+	file.AlreadyIn = known[parsed.Fingerprint()]
+	if file.AlreadyIn {
+		file.Selected = false
+	}
+	return file, true
 }
 
 // ── Settings ────────────────────────────────────────────────────────────
@@ -944,7 +1002,10 @@ func (a *App) ChangePassword() {
 	a.changeErr = ""
 	a.oldPwd, a.newPwd, a.newPwd2 = "", "", ""
 	a.runBusy(a.t("status.changingPwd"), func() error {
-		return a.Vault.ChangePassword(old, next)
+		oldBytes, newBytes := []byte(old), []byte(next)
+		defer memguard.Bytes(oldBytes)
+		defer memguard.Bytes(newBytes)
+		return a.Vault.ChangePassword(oldBytes, newBytes)
 	}, func(err error) {
 		switch {
 		case errors.Is(err, vault.ErrWrongPassword):

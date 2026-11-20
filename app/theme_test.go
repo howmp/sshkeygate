@@ -32,7 +32,7 @@ func TestThemeChoicePersists(t *testing.T) {
 
 	// Reopening the vault must restore the choice.
 	a.Vault.Lock()
-	if err := a.Vault.Unlock("correct horse battery"); err != nil {
+	if err := a.Vault.Unlock([]byte("correct horse battery")); err != nil {
 		t.Fatalf("Unlock: %v", err)
 	}
 	a.loadSettingsIntoView()
@@ -129,7 +129,7 @@ func TestAppearanceSurvivesRestart(t *testing.T) {
 	}
 
 	first := open()
-	if err := first.Vault.Create("correct horse battery"); err != nil {
+	if err := first.Vault.Create([]byte("correct horse battery")); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	if err := first.Keys.Load(); err != nil {

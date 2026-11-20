@@ -16,7 +16,7 @@ func importTestKey(t *testing.T, a *App, fixture, name string) keystore.Key {
 	if err != nil {
 		t.Fatalf("read %s: %v", fixture, err)
 	}
-	k, _, err := a.Keys.Import(raw, name, "", keystore.SourceManual)
+	k, _, err := a.Keys.Import(raw, name, nil, keystore.SourceManual)
 	if err != nil {
 		t.Fatalf("import %s: %v", fixture, err)
 	}

@@ -100,11 +100,11 @@ func TestWipeLeavesAUsableApp(t *testing.T) {
 		t.Fatalf("wipeEverything: %v", err)
 	}
 
-	if err := a.Vault.Create("a brand new password"); err != nil {
+	if err := a.Vault.Create([]byte("a brand new password")); err != nil {
 		t.Fatalf("Create after the wipe: %v", err)
 	}
 	a.Vault.Lock()
-	if err := a.Vault.Unlock("a brand new password"); err != nil {
+	if err := a.Vault.Unlock([]byte("a brand new password")); err != nil {
 		t.Fatalf("Unlock the new vault: %v", err)
 	}
 }

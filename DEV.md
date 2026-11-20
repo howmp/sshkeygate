@@ -46,7 +46,8 @@ app/
 internal/
   vault/                  # 加密存储（PBKDF2+AES-GCM、原子写、改密回滚）
   keystore/               # 元数据 + 按需解密签名
-  sshkey/                 # 解析/指纹/RSA flags 签名
+  memguard/               # 统一擦除、mlock/VirtualLock、进程加固
+  sshkey/                 # 解析/指纹/RSA flags 签名 + 私钥对象擦除
   agent/                  # SSH Agent 协议 + 管道/socket 传输 + peer 识别
   policy/                 # 4 种策略 + 信任校验
   auditlog/               # JSONL 日志
@@ -63,8 +64,9 @@ tools/sectrustcompat/     # macOS 11 兼容层
 |---|---|
 | `app/` | UI（`ui.NewTester` 无窗口渲染）、确认队列、主题、i18n、图标、窗口尺寸、解锁节流、导出、清空数据 |
 | `internal/agent` | 协议响应、异常帧、并发、真实 Windows 管道与 peer 识别、管道冲突 |
-| `internal/sshkey` | 夹具指纹、三种 RSA flags、加密私钥往返 |
-| `internal/vault` | 创建/解锁/改密/中断恢复/密文不含明文 |
+| `internal/sshkey` | 夹具指纹、三种 RSA flags、加密私钥往返、`Wipe` 清零、拒绝不可擦类型 |
+| `internal/memguard` | 切片/BigInt 清零、Lock/Unlock 容错、进程加固幂等 |
+| `internal/vault` | 创建/解锁/改密/中断恢复/密文不含明文/改密后密钥仍可用 |
 | `internal/policy` | 4 种策略、mtime/SHA-256 失效、未识别进程 |
 | `internal/keystore` | 导入去重/启停/改名/删除/签名 |
 | `internal/auditlog` | 追加、重载、500 条上限、清除 |
@@ -78,6 +80,8 @@ tools/sectrustcompat/     # macOS 11 兼容层
 - `internal/agent/listen_windows_test.go` 是真实管道集成测试，覆写 `pipePath` 变量避免和系统 agent 抢管道
 - `app/views_test.go` 用 `ui.NewTester` 无窗口渲染，断言页面文案与弹窗
 - 测试夹具在 `internal/sshkey/testdata`（`id_ed25519`、`id_ed25519.pub`、`id_ed25519_bwagent`、`id_rsa`）
+- 密码/口令在内部 API 一律用 `[]byte`，调用方 `defer memguard.Bytes`；UI 的 `string`
+  只在调用点转换一次，不要把它再复制进新的长期字段
 - **不要测剪贴板、`Theme.IsDark()`、`App.Locale()` 等需要事件循环的 MyGo API**，无窗口时会永久阻塞
 
 ## 图标
@@ -263,7 +267,11 @@ git push origin v0.4.0
 18. **管道冲突靠试连发现**：Win32 命名管道在 `PIPE_UNLIMITED_INSTANCES` 下不排他，
     `CreateNamedPipe` 永不因被占用而失败；`Listen` 用 `dialPipeAt` 以客户端身份试连一次，
     连得上就记 `conflict`，托盘显示「被占用」
-19. **内存清零尽力而为**：`zero()` 有效但清不干净（详见 README「私钥不驻留内存」）；
+19. **内存清零尽力而为**：擦除统一走 `internal/memguard`（`clear` + `runtime.KeepAlive`），
+    私钥用 `sshkey.Key.Wipe()` 擦 PEM 与解析出的 RSA/ECDSA/Ed25519 对象；`enc_key` 尽力
+    `mlock`/`VirtualLock`，macOS 关闭 core dump。密码与口令 API 一律收 `[]byte`，由调用方
+    负责擦自己的切片。仍清不干净的部分（Go string、KDF/HMAC/AES 内部状态、页文件、
+    崩溃转储）写在 README「私钥不驻留内存」，不要把擦除当安全边界；
     `runtime/secret` 在 Windows / macOS 上是空操作，因此不采用
 20. **保持 PBKDF2 10 万轮**，与 Flutter 版一致的解锁延迟
 21. **不把签名放进独立进程**做内存隔离
