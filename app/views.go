@@ -520,6 +520,8 @@ func (a *App) settingsPage(c *ui.Context, p *Palette) {
 			ui.Divider(c)
 			a.appearanceSetting(c, p)
 			ui.Divider(c)
+			a.updateSetting(c, p)
+			ui.Divider(c)
 			a.changePasswordSetting(c, p)
 		})
 
@@ -636,6 +638,45 @@ func (a *App) changePasswordSetting(c *ui.Context, p *Palette) {
 			a.showChange = true
 			a.changeErr = ""
 			a.notify()
+		}
+	})
+}
+
+// updateSetting draws the version the app runs and, when a newer one is
+// published, the way to install it.
+func (a *App) updateSetting(c *ui.Context, p *Palette) {
+	ui.Column(c).Padding(18, 0, 18, 0).Gap(8).Children(func() {
+		ui.Row(c).FillWidth().Justify(ui.SpaceBetween).AlignItems(ui.Center).Children(func() {
+			ui.Column(c).Gap(3).Children(func() {
+				ui.Text(c, a.t("settings.updates")).FontSize(14).Bold().TextColor(p.TextBody)
+				ui.Text(c, a.tf("settings.currentVersion",
+					strings.TrimPrefix(a.version, "v"))).FontSize(12).TextColor(p.TextLight)
+			})
+			switch a.updState {
+			case updateAvailable:
+				if labelledPrimary(c, svgImport, a.t("settings.installUpdate")).Clicked() {
+					a.InstallUpdate()
+				}
+			default:
+				checking := a.updState == updateChecking
+				if ui.Button(c, a.t("settings.checkUpdates")).
+					Disabled(a.busy || checking || !a.UpdatesEnabled()).Clicked() {
+					a.CheckUpdates()
+				}
+			}
+		})
+		if a.updState == updateInstalling {
+			ui.Progress(c, a.UpdateProgress()).Height(4)
+		}
+		if msg := a.UpdateMessage(); msg != "" {
+			ui.Text(c, msg).FontSize(12).TextColor(p.TextLight)
+		}
+		// The notes explain what the update changes, so they are worth the
+		// space when there is one to install.
+		if notes := a.UpdateNotes(); notes != "" && a.updState == updateAvailable {
+			ui.Scroll(c).Height(120).Width(cardWidth(c)).Children(func() {
+				ui.Text(c, notes).FontSize(12).TextColor(p.TextMuted)
+			})
 		}
 	})
 }

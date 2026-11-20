@@ -2,12 +2,16 @@
   "name": "sshkeygate",
   "slug": "sshkeygate",
   "identifier": "com.sshkeygate.app",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "copyright": "Copyright © 2026 sshkeygate",
   "license": "MIT",
   "icon": "app/assets/icon.png",
   "main": ".",
   "out": "dist",
+  "updates": {
+    "publicKey": "FUMaAl2P1NiNHM89QHiorz+btZIoC5AEW/QlwPABp8Y=",
+    "github": "howmp/sshkeygate"
+  },
   "macos": {
     "minimumSystemVersion": "11.0"
   }

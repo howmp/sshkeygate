@@ -56,10 +56,38 @@ jobs:
         shell: bash
         run: |
           VERSION="${TAG#v}"
+          # The updater needs the feed and the key that `mygo build` injects
+          # from mygo.json, and production=1 — without it IsDev() is true and
+          # the updater is disabled. This job builds with plain go, so that
+          # the committed .syso keeps carrying the executable's icon, and
+          # passes the same -X flags itself.
+          PUBKEY=$(python -c "import json;print(json.load(open('mygo.json',encoding='utf-8'))['updates']['publicKey'])")
+          REPO=$(python -c "import json;print(json.load(open('mygo.json',encoding='utf-8'))['updates']['github'])")
+          FEED="https://github.com/${REPO}/releases/latest/download/update-windows-amd64.json"
           # -H windowsgui keeps the console window from appearing.
-          go build -trimpath -ldflags "-H windowsgui -s -w -X main.version=v${VERSION}" \
+          go build -trimpath -ldflags "-H windowsgui -s -w -X main.version=v${VERSION} -X github.com/egoist/mygo.production=1 -X github.com/egoist/mygo.packageUpdateFeed=${FEED} -X github.com/egoist/mygo.packageUpdateKey=${PUBKEY}" \
             -o "sshkeygate-${VERSION}-windows-amd64.exe" .
           ls -l *.exe
+
+      # The archive the installed app downloads, signed with the key that
+      # apps only accept updates from. Without the secret there is nothing to
+      # sign it with, so the release goes out without in-place updates.
+      - name: Sign the update archive
+        shell: bash
+        env:
+          MYGO_UPDATER_PRIVATE_KEY: ${{ secrets.MYGO_UPDATER_PRIVATE_KEY }}
+        run: |
+          if [ -z "${MYGO_UPDATER_PRIVATE_KEY:-}" ]; then
+            echo "::warning::MYGO_UPDATER_PRIVATE_KEY is not set: publishing without an update archive"
+            exit 0
+          fi
+          VERSION="${TAG#v}"
+          mkdir -p updates
+          go run ./tools/updatesign \
+            -version "$VERSION" -target windows-amd64 \
+            -exe "sshkeygate-${VERSION}-windows-amd64.exe" -name sshkeygate.exe \
+            -tag "$TAG" -out updates
+          ls -l updates
 
       - name: Upload
         uses: actions/upload-artifact@v4
@@ -67,6 +95,13 @@ jobs:
           name: windows
           path: sshkeygate-*-windows-amd64.exe
           if-no-files-found: error
+
+      - name: Upload the update files
+        uses: actions/upload-artifact@v4
+        with:
+          name: updates-windows
+          path: updates/*
+          if-no-files-found: ignore
 
   macos:
     name: macOS universal app
@@ -150,6 +185,26 @@ jobs:
           codesign --force --deep --sign - "$app"
           codesign --verify --deep --strict --verbose=2 "$app"
 
+      # The update archive holds this bundle, after the shim and the
+      # signature, so that installing an update keeps both. mygo build signs
+      # an archive of what it assembled, which has neither, so this replaces
+      # that archive with the released one.
+      - name: Sign the update archive
+        env:
+          MYGO_UPDATER_PRIVATE_KEY: ${{ secrets.MYGO_UPDATER_PRIVATE_KEY }}
+        run: |
+          if [ -z "${MYGO_UPDATER_PRIVATE_KEY:-}" ]; then
+            echo "::warning::MYGO_UPDATER_PRIVATE_KEY is not set: publishing without an update archive"
+            exit 0
+          fi
+          VERSION="${TAG#v}"
+          mkdir -p updates
+          go run ./tools/updatesign \
+            -version "$VERSION" -target darwin-universal \
+            -app dist/darwin-universal/sshkeygate.app \
+            -tag "$TAG" -out updates
+          ls -l updates
+
       # A disk image of the shimmed, signed app: mygo skipped it above, since
       # it would have held the app from before the shim.
       - name: Build the disk image
@@ -176,6 +231,13 @@ jobs:
           path: out/*.dmg
           if-no-files-found: error
 
+      - name: Upload the update files
+        uses: actions/upload-artifact@v4
+        with:
+          name: updates-macos
+          path: updates/*
+          if-no-files-found: ignore
+
   publish:
     name: Publish the release
     needs: [windows, macos]
@@ -194,11 +256,12 @@ jobs:
 
       # A disk image keeps its directory when the artifact is unzipped, so
       # the assets are gathered into one flat directory first: gh refuses a
-      # directory among the files to upload.
+      # directory among the files to upload. The update archives and their
+      # manifests go with them, which is what installed apps download.
       - name: Gather the assets
         run: |
           mkdir -p assets
-          find release -type f \( -name '*.exe' -o -name '*.dmg' \) -exec cp {} assets/ \;
+          find release -type f \( -name '*.exe' -o -name '*.dmg' -o -name '*.tar.gz' -o -name 'update-*.json' \) -exec cp {} assets/ \;
           ls -l assets
 
       - name: Publish

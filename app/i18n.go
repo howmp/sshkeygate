@@ -151,6 +151,22 @@ var messages = map[string]message{
 	"settings.langZh":       {"中文", "中文"},
 	"settings.langEn":       {"English", "English"},
 
+	// Updates.
+	"settings.updates":        {"自动更新", "Updates"},
+	"settings.currentVersion": {"当前版本 %s", "Version %s"},
+	"settings.checkUpdates":   {"检查更新", "Check for updates"},
+	"settings.installUpdate":  {"下载并重启", "Download and restart"},
+	"update.checking":         {"正在检查新版本…", "Checking for a newer version…"},
+	"update.current":          {"已是最新版本", "This is the newest version"},
+	"update.available":        {"发现新版本 %s，下载后会自动重启", "Version %s is available; the app restarts once it is installed"},
+	"update.installing":       {"正在下载更新…", "Downloading the update…"},
+	"update.progress":         {"正在下载更新… %d%%", "Downloading the update… %d%%"},
+	"update.failed":           {"更新失败：%s", "The update failed: %s"},
+	"update.disabled": {"此安装方式无法自动更新：安装目录不可写，或该构建未包含更新配置。请手动下载新版本。",
+		"This installation cannot update itself: the folder is not writable, or the build has no update settings. Download the new version instead."},
+	"status.checkingUpdates":  {"正在检查更新", "Checking for updates"},
+	"status.installingUpdate": {"正在安装更新", "Installing the update"},
+
 	// Log page.
 	"log.title":   {"签名请求日志", "Signing log"},
 	"log.clear":   {"清除", "Clear"},

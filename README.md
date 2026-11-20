@@ -13,6 +13,7 @@
 - **信任程序校验** — 以可执行文件路径为身份，可选校验最后修改时间与 SHA-256
 - **操作日志** — JSONL 持久化，最多 500 条，锁定状态下也可记录
 - **系统托盘常驻** — 关窗最小化到托盘，Agent 持续可用
+- **自动更新** — 配置页检查新版本、下载并原地安装，安装后自动重启；更新包由 Ed25519 签名，只接受用本项目密钥签署的包
 - **单实例** — 重复启动会退出新进程，并把已运行的窗口还原到前台
 - **开机启动 / 锁屏自动锁定**
 - **浅色 / 深色 / 跟随系统** — 配置页可切换，配色随主题整体变化
@@ -111,6 +112,50 @@ go run github.com/akavel/rsrc@latest -ico app/assets/icon.ico -o rsrc_windows_am
 - 资源管理器 / 任务栏的 exe 图标来自 `rsrc_windows_amd64.syso`
 - `.ico` 含 16–256 共 9 种尺寸
 
+### 自动更新
+
+应用从 GitHub Releases 读取清单，下载存档，校验签名后原地替换：
+
+| 平台 | 替换什么 | 清单 |
+|---|---|---|
+| Windows | 可执行文件所在目录里的 `sshkeygate.exe` | `update-windows-amd64.json` |
+| macOS | 整个 `.app` 包 | `update-darwin-universal.json` |
+
+清单与存档同发布在 release 里，`mygo.json` 的 `updates` 把地址与公钥编进程序：
+
+```json
+"updates": {
+  "publicKey": "FUMaAl2P1NiNHM89QHiorz+btZIoC5AEW/QlwPABp8Y=",
+  "github": "howmp/sshkeygate"
+}
+```
+
+**签名密钥。** 私钥只存在于 CI 的 `MYGO_UPDATER_PRIVATE_KEY` secret 里，
+仓库里没有。丢失私钥等于让所有已安装的副本再也收不到更新，务必另行备份。
+重新生成会换掉公钥，旧版本将不再接受新包：
+
+```bash
+go run github.com/egoist/mygo/cmd/mygo@latest keygen -o dist/update-keys
+# 公钥 → mygo.json 的 updates.publicKey
+# 私钥 → GitHub secret MYGO_UPDATER_PRIVATE_KEY
+```
+
+**为什么不用 `mygo build` 的存档。** 它签的是自己刚组装出来的包，而 macOS
+包要在这之后再加兼容层（`libsectrust_compat.dylib` 与启动脚本）。用它的存档
+更新，装上的包没有兼容层，macOS 11 会启动不了。所以 CI 在加完兼容层、重新
+签名之后再跑 `tools/updatesign`，从最终产物重新打包并签名。
+
+```bash
+# 手动签名一个归档（CI 里就是这么调用的）
+MYGO_UPDATER_PRIVATE_KEY=... go run ./tools/updatesign \
+  -version 0.4.0 -target darwin-universal \
+  -app dist/darwin-universal/sshkeygate.app -tag v0.4.0 -out updates
+```
+
+**限制。** 应用必须能写自己所在的目录：Windows 放在用户可写的文件夹里、
+macOS 拖进 `/Applications` 且归当前用户所有。装在管理员所有的位置时，配置页
+会说明无法自动更新，需手动下载。
+
 ## 目录结构
 
 ```
@@ -124,6 +169,7 @@ app/
   confirm.go                 # 签名确认队列（串行展示 + 倒计时）
   tray.go                    # 托盘菜单
   icon.go                    # 内嵌应用图标
+  update.go                  # 检查更新 / 下载 / 安装
 internal/
   vault/                     # 加密存储（PBKDF2 + AES-256-GCM，原子写，改密可回滚）
   keystore/                  # 密钥元数据 + 按需解密签名
@@ -133,6 +179,7 @@ internal/
   auditlog/                  # JSONL 审计日志
   bitwarden/                 # prelogin → token → sync → 解密
 tools/genicon/               # 图标生成器
+tools/updatesign/            # 更新归档签名 + 清单生成
 ```
 
 ## 安全设计

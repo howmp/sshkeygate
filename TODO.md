@@ -32,7 +32,8 @@
 - [ ] 支持 SSH 证书（`*-cert-v01@openssh.com`）签名
 - [ ] 密钥导出（导出为 PEM）
 - [ ] 从 `flutter_secure_storage.dat` 的一次性迁移（当前明确不做）
-- [ ] 自动更新（`mygo.Updater`，`mygo/updater_*.go` 提供 `Check` / `SetSource` / `SetPrereleases`）
+- [x] **自动更新**：`mygo.Updater` 检查 + 原地安装，`tools/updatesign` 从最终产物签包。
+      待办：把私钥加入 GitHub secret `MYGO_UPDATER_PRIVATE_KEY`，否则发布时只有警告、没有更新包
 
 ## macOS 打包
 
@@ -130,4 +131,9 @@ MYGO_LDFLAGS="-macos 11.0" \
   细节见 README「私钥不驻留内存」
 - **Win32 命名管道不排他**：多个进程可用 `PIPE_UNLIMITED_INSTANCES` 各自创建同名
   实例，绑定不会失败；因此冲突只能靠「以客户端身份试连」发现，不能靠 `CreateNamedPipe` 报错
+- **更新包自己签**：`mygo build` 的存档是加兼容层之前的包，用它更新会让 macOS 11
+  启动不了；CI 用 `tools/updatesign` 从最终产物重新打包
+- **Windows 用 `go build` 而非 `mygo build`**（保留提交的 `.syso` 图标），因此要手动
+  补 `-X github.com/egoist/mygo.production=1` 与 `packageUpdateFeed` / `packageUpdateKey`，
+  否则 `IsDev()` 为真、更新被判定为不可用
 - macOS 最低版本 11.0（Big Sur）：`Info.plist` 与 `-macos` 两处都要设，覆盖 Intel 与 Apple Silicon

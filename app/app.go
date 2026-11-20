@@ -140,6 +140,17 @@ type App struct {
 	keyFilter string
 	keySort   int
 
+	// Update state, written by CheckUpdates and InstallUpdate.
+	updState   string
+	updVersion string
+	updNotes   string
+	updErr     string
+	updDone    int64
+	updTotal   int64
+	updRelease *mygo.Update
+	updOnce    sync.Once
+	updEnabled bool
+
 	keyList   *ui.ListState
 	logList   *ui.ListState
 	fileList  *ui.ListState
