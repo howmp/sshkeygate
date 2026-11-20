@@ -178,8 +178,7 @@ var messages = map[string]message{
 	"export.message": {"导出的文件包含未加密的私钥", "The file will hold the private key unencrypted"},
 	"export.warning": {"导出的文件包含未加密的私钥。请妥善保管；任何读到它的人都能以你的身份登录服务器，直到你更换这把密钥。",
 		"The exported file holds the private key unencrypted. Keep it safe: anyone who reads it can sign in as you until the key is replaced."},
-	"export.continue":  {"选择保存位置", "Choose where to save"},
-	"export.filterPem": {"私钥文件", "Private key"},
+	"export.continue": {"选择保存位置", "Choose where to save"},
 
 	// Data wipe.
 	"wipe.open":  {"忘记密码？清空数据", "Forgot password? Erase data"},

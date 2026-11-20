@@ -283,6 +283,9 @@ func (a *App) keysPage(c *ui.Context, p *Palette) {
 	})
 }
 
+// keyRow draws one key. The columns after the name are fixed width, so the
+// rows line up whatever the names and types are: a paper's worth of ragged
+// tags makes the list hard to scan, which is the point of a list.
 func (a *App) keyRow(c *ui.Context, p *Palette, k keystore.Key) {
 	ui.Row(c).Width(rowWidth(c)).Padding(10, 16, 10, 16).Gap(12).AlignItems(ui.Center).
 		BorderWidth(0, 0, 1, 0).BorderColor(p.BorderLight).Children(func() {
@@ -290,14 +293,22 @@ func (a *App) keyRow(c *ui.Context, p *Palette, k keystore.Key) {
 		if ui.Checkbox(c, &enabled, "").Changed() {
 			a.ToggleKey(k.ID)
 		}
-		ui.Column(c).FillWidth().Gap(2).Children(func() {
-			ui.Text(c, k.Name).FontSize(14).Bold().TextColor(p.TextBody).Ellipsis(k.Name)
-			ui.Text(c, k.Fingerprint).FontSize(11).TextColor(p.TextLight).
+		// The name column takes what is left; Clip keeps a long name or
+		// fingerprint inside it, since SingleLine truncates the text but
+		// still draws past the column, over the tag that follows.
+		ui.Column(c).FillWidth().Gap(2).Clip().Children(func() {
+			ui.Text(c, k.Name).FontSize(14).Bold().TextColor(p.TextBody).SingleLine().
+				Ellipsis(k.Name)
+			ui.Text(c, k.Fingerprint).FontSize(11).TextColor(p.TextLight).SingleLine().
 				Ellipsis(k.Fingerprint).Tooltip(k.Fingerprint)
 		})
-		ui.Text(c, k.Algorithm).FontSize(11).Bold().TextColor(p.TextMuted).NoWrap().
-			Background(p.TagBg).Padding(8, 2, 8, 2).Radius(5)
-		ui.Text(c, a.sourceLabel(k.Source)).FontSize(11).TextColor(p.TextLight).NoWrap().Width(64)
+		// The tag takes the column's width and keeps its text on one line:
+		// left to size itself, "ssh-ed25519" widened the column and pushed
+		// everything to its right, which is what a fixed column prevents.
+		ui.Text(c, k.Algorithm).FontSize(11).Bold().TextColor(p.TextMuted).SingleLine().
+			Background(p.TagBg).Padding(8, 2, 8, 2).Radius(5).Width(algorithmColumn)
+		ui.Text(c, a.sourceLabel(k.Source)).FontSize(11).TextColor(p.TextLight).
+			NoWrap().Width(sourceColumn).Ellipsis(a.sourceLabel(k.Source))
 		if iconButton(c, p, svgCopy, p.TextMuted, a.t("keys.copyTip")).Clicked() {
 			a.CopyPublicKey(k)
 		}

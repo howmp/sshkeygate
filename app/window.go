@@ -20,6 +20,13 @@ const (
 	MainHeight    = 620
 	MainMinWidth  = 820
 	MainMinHeight = 560
+
+	// Columns of a key row after the name, fixed so the rows line up: the
+	// widest algorithm ("ecdsa-sha2-nistp256" is longer still, but the tag
+	// only has to show "ssh-ed25519" whole) and the widest source label
+	// ("手动导入" / "Bitwarden").
+	algorithmColumn = 128
+	sourceColumn    = 72
 )
 
 // measureHeight is the tall window the unlock card is measured in; the card

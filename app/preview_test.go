@@ -46,6 +46,15 @@ func TestPreview(t *testing.T) {
 		if _, _, err := a.Keys.Import(keyPEM, "github-ed25519", "", keystore.SourceManual); err != nil {
 			t.Fatalf("import: %v", err)
 		}
+		// The other algorithm and source too, so the render shows whether the
+		// columns line up whatever the names and types are.
+		rsaPEM, err := os.ReadFile(filepath.Join("..", "internal", "sshkey", "testdata", "id_rsa"))
+		if err != nil {
+			t.Fatalf("read rsa fixture: %v", err)
+		}
+		if _, _, err := a.Keys.Import(rsaPEM, "a-rather-long-key-name-for-the-row", "", keystore.SourceBitwarden); err != nil {
+			t.Fatalf("import rsa: %v", err)
+		}
 
 		// Locked page, at the size the app asks for on this platform.
 		unlockWidth, unlockHeight := a.LockedSize()

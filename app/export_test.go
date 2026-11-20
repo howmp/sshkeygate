@@ -82,6 +82,24 @@ func TestExportKeyWritesThePrivateKey(t *testing.T) {
 	}
 }
 
+// TestWithKeyExtension checks the name the file ends up with, which AppKit
+// does not always get right: it replaced "id_rsa.pem" with "id_rsa.cer" when
+// a filter named types it could not match.
+func TestWithKeyExtension(t *testing.T) {
+	cases := map[string]string{
+		"/tmp/id_rsa.pem":  "/tmp/id_rsa.pem",
+		"/tmp/id_rsa.key":  "/tmp/id_rsa.key",
+		"/tmp/id_rsa":      "/tmp/id_rsa.pem",
+		"/tmp/id_rsa.cer":  "/tmp/id_rsa.cer",
+		"/tmp/a b/c d.pem": "/tmp/a b/c d.pem",
+	}
+	for in, want := range cases {
+		if got := withKeyExtension(in); got != want {
+			t.Errorf("withKeyExtension(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 // TestEndpointTextIsWhatClientsNeed checks the endpoint the copy offers has
 // the shape clients expect.
 //

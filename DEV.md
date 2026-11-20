@@ -126,6 +126,16 @@ Go 1.27 的 `crypto/x509` 还硬引用了 macOS 12 才有的 `SecTrustCopyCertif
 所以包里附带 `Contents/Frameworks/libsectrust_compat.dylib`（用旧 API 实现该符号）
 与一个注入它的启动脚本。见 [tools/sectrustcompat](tools/sectrustcompat/README.md)。
 
+### 部署时的坑
+
+- **必须 `open <包>` 启动**：直接跑 `Contents/MacOS/sshkeygate.bin` 会
+  `dyld: Symbol not found: _SecTrustCopyCertificateChain`，兼容层由启动脚本注入
+- **重新部署前 `pkill -9`**：`SIGTERM` 后旧进程若残留，单实例锁会把新实例当成二次
+  启动转发过去再退出，表现为「进程在跑但没有 socket」
+- **清空 `~/.sshkeygate` 后要重启应用**，否则监听器不会重建端点
+- **保存对话框不要传文件类型过滤器**：AppKit 会把它认为不合规的扩展名换掉
+  （`id_rsa.pem` → `id_rsa.cer`），而「保存」并不需要过滤器限制用户
+
 ### 签名与公证
 
 未签名时 MyGo 用 `-`（ad hoc 签名），**只能在构建它的那台 Mac 上运行**，拷到别的机器会被

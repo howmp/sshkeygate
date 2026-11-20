@@ -2,6 +2,7 @@ package app
 
 import (
 	"os"
+	"path/filepath"
 
 	"github.com/egoist/mygo"
 
@@ -26,13 +27,15 @@ func (a *App) ExportKey(id string) {
 	}
 	// The platform's save dialog runs its own modal loop, so it must not
 	// open while this app's window is busy.
+	//
+	// No filter is passed: AppKit replaces the extension of a file name that
+	// does not belong to an allowed type with one of its own, which turned
+	// "id_rsa.pem" into "id_rsa.cer" - a certificate panel's default - and
+	// the file then claimed to be something it is not.
 	path, err := mygo.Dialog.Save(mygo.SaveDialogOptions{
 		Title:       a.t("export.title"),
 		DefaultPath: exportName(key.Name),
 		Message:     a.t("export.message"),
-		Filters: []mygo.FileFilter{
-			{Name: a.t("export.filterPem"), Extensions: []string{"pem", "key"}},
-		},
 	})
 	if err != nil {
 		a.setStatus(a.tf("err.exportFailed", err.Error()))
@@ -41,6 +44,10 @@ func (a *App) ExportKey(id string) {
 	if path == "" {
 		return // The user cancelled.
 	}
+	// A name the dialog accepted without an extension would leave a file no
+	// editor opens; the dialog names it .pem already, so this covers a user
+	// who removed it.
+	path = withKeyExtension(path)
 	if err := a.writeExportedKey(id, path); err != nil {
 		a.setStatus(a.tf("err.exportFailed", err.Error()))
 		return
@@ -106,5 +113,21 @@ func exportName(name string) string {
 func wipe(b []byte) {
 	for i := range b {
 		b[i] = 0
+	}
+}
+
+// withKeyExtension adds the extension a private key file should have.
+//
+// AppKit may return a name without one - and it may return one of its own
+// choosing, which is why no filter is passed - so the name is settled here
+// rather than left to the dialog.
+func withKeyExtension(path string) string {
+	switch filepath.Ext(path) {
+	case ".pem", ".key":
+		return path
+	case "":
+		return path + ".pem"
+	default:
+		return path
 	}
 }
