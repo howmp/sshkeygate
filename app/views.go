@@ -38,6 +38,7 @@ func (a *App) View(c *ui.Context) {
 		a.confirmView(c, p)
 		a.renameView(c, p)
 		a.changePasswordView(c, p)
+		a.exportView(c, p)
 	})
 }
 
@@ -286,6 +287,9 @@ func (a *App) keyRow(c *ui.Context, p *Palette, k keystore.Key) {
 		if iconButton(c, p, svgCopy, p.TextMuted, a.t("keys.copyTip")).Clicked() {
 			a.CopyPublicKey(k)
 		}
+		if iconButton(c, p, svgExport, p.TextMuted, a.t("keys.exportTip")).Clicked() {
+			a.ConfirmExport(k.ID)
+		}
 		if iconButton(c, p, svgEdit, p.TextMuted, a.t("keys.rename")).Clicked() {
 			a.renameID, a.renameName, a.showRename = k.ID, k.Name, true
 			a.notify()
@@ -531,7 +535,15 @@ func (a *App) settingsPage(c *ui.Context, p *Palette) {
 			}
 			ui.Text(c, a.DataDir).FontSize(10).TextColor(p.TextLight)
 			ui.Text(c, a.t("settings.dataHint")).FontSize(10).TextColor(p.TextLight)
-			ui.Text(c, a.tf("settings.endpoint", agentEndpoint())).FontSize(10).TextColor(p.TextLight)
+			// macOS clients need SSH_AUTH_SOCK exported, so the line is
+			// offered ready to paste rather than only shown.
+			ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
+				ui.Text(c, a.tf("settings.endpoint", agentEndpoint())).FontSize(10).TextColor(p.TextLight)
+				if iconButton(c, p, svgCopy, p.TextMuted, a.t("settings.copyEndpoint")).Width(20).Height(20).
+					Clicked() {
+					a.CopyEndpoint()
+				}
+			})
 		})
 	})
 }
@@ -836,6 +848,38 @@ func (a *App) renameView(c *ui.Context, p *Palette) {
 	})
 	if !open {
 		a.showRename = false
+	}
+}
+
+// exportView asks whether to write a private key to a file. The file holds
+// the decrypted key, so the warning comes before the save dialog rather than
+// after the file exists.
+func (a *App) exportView(c *ui.Context, p *Palette) {
+	if !a.showExport {
+		return
+	}
+	open := true
+	ui.DialogBase(c, &open, func(backdrop, panel ui.Element) {
+		backdrop.Background(p.Scrim)
+		panel.Width(400).Padding(22, 22, 22, 22).Radius(14).
+			Background(p.Card).Gap(10).Children(func() {
+			ui.Text(c, a.t("export.title")).FontSize(16).Bold().TextColor(p.TextBody)
+			ui.Text(c, a.t("export.warning")).FontSize(12).TextColor(p.TextLight)
+			ui.Row(c).FillWidth().Justify(ui.End).Gap(8).Children(func() {
+				if ui.Button(c, a.t("dialog.cancel")).Clicked() {
+					a.showExport = false
+				}
+				if ui.PrimaryButton(c, a.t("export.continue")).Clicked() {
+					a.showExport = false
+					a.notify()
+					a.ExportKey(a.exportID)
+					a.notify()
+				}
+			})
+		})
+	})
+	if !open {
+		a.showExport = false
 	}
 }
 

@@ -95,31 +95,38 @@ type App struct {
 	measuring bool
 
 	// UI state, main thread only.
-	page       string
-	status     string
-	busy       bool
-	busyLabel  string
-	password   string
-	password2  string
-	unlockErr  string
-	importTab  int
-	textName   string
-	textKey    string
-	textPass   string
-	scanDir    string
-	scanFiles  []ScanFile
-	selectAll  bool
-	bwServer   string
-	bwEmail    string
-	bwPass     string
-	showRename bool
-	renameID   string
-	renameName string
-	showChange bool
-	oldPwd     string
-	newPwd     string
-	newPwd2    string
-	changeErr  string
+	page      string
+	status    string
+	busy      bool
+	busyLabel string
+	password  string
+	password2 string
+	unlockErr string
+
+	// Unlock throttle: failed attempts in a row, and the earliest moment the
+	// next one may run.
+	unlockFailures  int
+	unlockNotBefore time.Time
+	importTab       int
+	textName        string
+	textKey         string
+	textPass        string
+	scanDir         string
+	scanFiles       []ScanFile
+	selectAll       bool
+	bwServer        string
+	bwEmail         string
+	bwPass          string
+	showRename      bool
+	renameID        string
+	renameName      string
+	showExport      bool
+	exportID        string
+	showChange      bool
+	oldPwd          string
+	newPwd          string
+	newPwd2         string
+	changeErr       string
 
 	// Settings widgets bind to these.
 	timeoutSlider    float64
@@ -410,25 +417,88 @@ func (a *App) SubmitUnlock() {
 }
 
 func (a *App) unlock() {
+	// Every wrong password costs a full PBKDF2 derivation, so the rate has
+	// to be limited: without this, a local attacker can try passwords as
+	// fast as the derivation allows. The delay grows with each failure and
+	// is cleared by a success, so a mistyped password costs a second once,
+	// not forever.
+	if wait := a.unlockWait(); wait > 0 {
+		a.unlockErr = a.tf("err.unlockThrottled", int(wait/time.Second)+1)
+		a.notify()
+		return
+	}
+	password := a.password
 	a.runBusy(a.t("status.unlocking"), func() error {
-		if err := a.Vault.Unlock(a.password); err != nil {
+		if err := a.Vault.Unlock(password); err != nil {
 			return err
 		}
 		return a.Keys.Load()
 	}, func(err error) {
 		if err != nil {
 			if errors.Is(err, vault.ErrWrongPassword) {
-				a.unlockErr = a.t("err.wrongPassword")
+				a.noteUnlockFailure()
+				a.unlockErr = a.throttleMessage()
 			} else {
 				a.unlockErr = err.Error()
 			}
+			a.notify()
 			return
 		}
+		a.resetUnlockFailures()
 		a.password, a.unlockErr = "", ""
 		a.loadSettingsIntoView()
 		a.status = a.t("status.unlocked")
 		a.applyWindowSize()
 	})
+}
+
+// Unlock throttle: after this many failures in a row, each further attempt
+// waits longer, so a dictionary attack on the vault is not merely slower but
+// exponentially so.
+const (
+	unlockFreeAttempts = 3
+	unlockMaxDelay     = 60 * time.Second
+)
+
+// unlockWait is how long the next attempt must wait, 0 for none.
+func (a *App) unlockWait() time.Duration {
+	remaining := a.unlockNotBefore.Sub(time.Now())
+	if remaining <= 0 {
+		return 0
+	}
+	return remaining
+}
+
+// noteUnlockFailure records a wrong password and arms the next delay.
+func (a *App) noteUnlockFailure() {
+	a.unlockFailures++
+	if a.unlockFailures <= unlockFreeAttempts {
+		return
+	}
+	// 1s, 2s, 4s, ... up to a minute: enough to make guessing useless
+	// without locking a user out for long.
+	delay := time.Second << min(a.unlockFailures-unlockFreeAttempts-1, 6)
+	if delay > unlockMaxDelay {
+		delay = unlockMaxDelay
+	}
+	a.unlockNotBefore = time.Now().Add(delay)
+}
+
+// resetUnlockFailures forgets the failures, which a correct password or a
+// restart does.
+func (a *App) resetUnlockFailures() {
+	a.unlockFailures = 0
+	a.unlockNotBefore = time.Time{}
+}
+
+// throttleMessage is the sentence shown after a wrong password: it says how
+// long the next attempt waits once there is a wait.
+func (a *App) throttleMessage() string {
+	if a.unlockFailures <= unlockFreeAttempts {
+		return a.t("err.wrongPassword")
+	}
+	wait := a.unlockWait()
+	return a.tf("err.wrongPasswordWait", int(wait/time.Second)+1)
 }
 
 // Lock closes the vault and denies everything still pending.
