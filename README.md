@@ -2,6 +2,32 @@
 
 跨平台 SSH Agent（Windows / macOS），用纯 Go 编写，UI 基于 [MyGo](https://github.com/egoist/mygo) 原生 `ui` 包绘制。支持从 Bitwarden / Vaultwarden 导入密钥。
 
+## 截图
+
+浅色主题的中文界面，深色与英文同样支持。
+
+| 密钥列表 | 签名确认 |
+|---|---|
+| ![密钥列表](docs/screenshots/keys.png) | ![签名确认](docs/screenshots/prompt.png) |
+| 名称、指纹、算法、来源逐行对齐 | 每次签名都要确认，可把程序加入信任列表 |
+
+| 信任程序 | 日志 |
+|---|---|
+| ![信任程序](docs/screenshots/trusted.png) | ![日志](docs/screenshots/log.png) |
+| 信任记录保存路径、修改时间与 SHA-256 | 每次签名请求的结果都留痕 |
+
+解锁页 —— 密码 + 设备密钥双重保护，忘了只能清空重来。
+
+![解锁](docs/screenshots/unlock.png)
+
+导入 —— 文本、文件、Bitwarden 三种来源，Vaultwarden 走同一个接口。
+
+![导入](docs/screenshots/import.png)
+
+配置 —— 开机启动、锁屏锁定、确认超时、信任校验项、外观与语言、自动更新。
+
+![配置](docs/screenshots/settings.png)
+
 ## 功能
 
 - **SSH Agent** — 与 OpenSSH 原生兼容；Windows 走 `ssh.exe` 默认的同名管道，macOS 通过 `SSH_AUTH_SOCK` 接入。支持 Ed25519 / RSA / ECDSA

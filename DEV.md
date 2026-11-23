@@ -58,6 +58,7 @@ tools/updatesign/         # 更新归档签名 + 清单生成
 tools/machoinfo/          # 读 Mach-O 架构与 minos
 tools/sectrustcompat/     # macOS 11 兼容层
 tools/fakeagent/          # 手动验证管道冲突的假 agent
+docs/screenshots/         # README 用的界面截图（由预览测试生成）
 ```
 
 ## 测试
@@ -98,6 +99,28 @@ go run github.com/akavel/rsrc@latest -ico app/assets/icon.ico -o rsrc_windows_am
 - 窗口图标与非 macOS 托盘图标：`//go:embed assets/icon.png`（`app/icon.go`）；登录页与侧边栏用 `ui.Image` 绘制同一张
 - macOS 菜单栏用单色模板图 `app/assets/tray.png`，由同一源图按「与原图背景色的距离」提取轮廓生成
 - exe 图标：`rsrc_windows_amd64.syso` 编进二进制，**随仓库提交**（约 50KB，只有图标变化时才变）；改完 PNG/ICO 后 `go generate .` 重建 .syso
+
+## 截图
+
+README 里的 `docs/screenshots/*.png` 都由预览测试渲染，不是手工截图；改了界面就重新生成并
+一起提交，否则用户看到的是旧版本的样子。
+
+```bash
+SSHKEYGATE_PREVIEW=1 go test ./app/ -run TestPreview   # 产物在 dist/preview
+```
+
+| README 文件 | 来源 | 内容 |
+|---|---|---|
+| `unlock.png` | `light-unlock.png` | 解锁页（锁定的 app，388px 宽） |
+| `keys.png` | `light-keys-zh.png` | 密钥列表，三把不同类型的密钥 |
+| `prompt.png` | `light-confirm-zh.png` | 签名确认弹窗 |
+| `trusted.png` | `light-trusted-zh.png` | 信任程序列表 |
+| `log.png` | `light-log-zh.png` | 日志，几种结果混排 |
+| `import.png` | `light-import-zh.png` | 导入页 |
+| `settings.png` | `light-settings-zh-tall.png` | 配置页全图（1200px 高，免滚动） |
+
+测试里为这几张图准备了固定数据：版本号 `v0.3.2`、`%APPDATA%\sshkeygate` 数据目录、
+三条信任记录与八条带时间差的日志，渲染结果与发布版一致。
 
 ## 打包
 

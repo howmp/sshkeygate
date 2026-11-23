@@ -262,7 +262,6 @@ func DefaultScanDir() string {
 	return home + `\.ssh`
 }
 
-// EnvHint explains how to point clients at this agent.
-func EnvHint() string {
-	return fmt.Sprintf("OpenSSH on Windows connects to %s by default.", pipePath)
-}
+// EnvHint is the endpoint clients connect to. Windows clients need no
+// variable: ssh.exe uses this pipe unless configured otherwise.
+func EnvHint() string { return pipePath }
