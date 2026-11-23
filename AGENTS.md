@@ -29,8 +29,9 @@ Windows 构建**必须带 `-H windowsgui`**，否则运行时弹出控制台黑�
 - **`mygo.App.SetLanguages("zh", "en")` 必须在 `main` 里调**，否则 `Locale()` 永远返回 `en`
 - `App.appReady` 为 true 前不调用 `Theme.SetSource` 等需要事件循环的 API
 - `NewTray` 必须在 `App.WhenReady` 里创建，早了会 panic
-- **托盘**：`OnClick` 只在图标没有菜单时触发。macOS 的 status item 一旦有菜单，任何点击
-  都先弹菜单——这就是 macOS 上 `refreshTray` 直接返回、右键才临时挂菜单的原因
+- **托盘**：Windows 左键走 `OnClick`、右键走 `OnRightClick` 并自动弹出 `SetMenu` 给的菜单。
+  macOS 的 status item 一旦有菜单，任何点击都先弹菜单——这就是 macOS 上 `refreshTray`
+  直接返回、右键才临时挂菜单的原因
 
 ## 平台差异
 

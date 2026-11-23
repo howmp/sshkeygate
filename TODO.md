@@ -12,7 +12,9 @@
 
 ## 功能
 
-- [ ] **一个文件内多把私钥**：`ssh.ParseRawPrivateKey` 会返回 `*ssh.MultiPrivateKey`，
-      `sshkey.Parse` 目前只保留了单把（`signer` 只存一个），需改成一个文件产出多把
+- [ ] **一个文件内多把私钥**：`ssh.ParseRawPrivateKey` 内部只用 `pem.Decode` 取第一个
+      PEM 块，`sshkey.Parse` 也只产出一把；需要遍历所有块，并让 `Parse` 返回多把
+- [ ] **审批模式接进界面**：`internal/policy` 已定义会话授权与 5 分钟定时授权，但设置页
+      没有入口，`SetMode` 只在测试里调用；当前实际行为是每次确认（信任程序除外）
 - [ ] **SSH 证书签名**（`*-cert-v01@openssh.com`）
 - [ ] Bitwarden 组织/集合过滤（当前同步账号下所有 SSH key）

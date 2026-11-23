@@ -30,6 +30,7 @@ main.go                   # 单实例锁、服务装配、窗口、托盘、锁�
 app/
   app.go                  # 服务聚合 + UI 状态 + 动作（解锁/导入/设置）
   views.go                # 侧边栏 + 5 页面 + 确认/改名/改密/导出弹窗
+  window.go               # 窗口尺寸与解锁卡片测量
   theme.go                # 浅色/深色配色 + MyGo 主题
   i18n.go                 # 中英文案表
   icons.go                # 线性 SVG 图标
@@ -49,13 +50,14 @@ internal/
   memguard/               # 统一擦除、mlock/VirtualLock、进程加固
   sshkey/                 # 解析/指纹/RSA flags 签名 + 私钥对象擦除
   agent/                  # SSH Agent 协议 + 管道/socket 传输 + peer 识别
-  policy/                 # 4 种策略 + 信任校验
+  policy/                 # 审批判定 + 信任校验（会话/定时模式未接入界面）
   auditlog/               # JSONL 日志
   bitwarden/              # KDF + EncString + 同步
 tools/genicon/            # 图标生成器
 tools/updatesign/         # 更新归档签名 + 清单生成
 tools/machoinfo/          # 读 Mach-O 架构与 minos
 tools/sectrustcompat/     # macOS 11 兼容层
+tools/fakeagent/          # 手动验证管道冲突的假 agent
 ```
 
 ## 测试
@@ -67,7 +69,7 @@ tools/sectrustcompat/     # macOS 11 兼容层
 | `internal/sshkey` | 夹具指纹、三种 RSA flags、加密私钥往返、`Wipe` 清零、拒绝不可擦类型 |
 | `internal/memguard` | 切片/BigInt 清零、Lock/Unlock 容错、进程加固幂等 |
 | `internal/vault` | 创建/解锁/改密/中断恢复/密文不含明文/改密后密钥仍可用 |
-| `internal/policy` | 4 种策略、mtime/SHA-256 失效、未识别进程 |
+| `internal/policy` | 审批模式判定（含未接线的会话/定时授权）、mtime/SHA-256 失效、未识别进程 |
 | `internal/keystore` | 导入去重/启停/改名/删除/签名 |
 | `internal/auditlog` | 追加、重载、500 条上限、清除 |
 | `internal/bitwarden` | EncString v2、MAC 篡改、HKDF 展开、换半重试 |
@@ -87,27 +89,30 @@ tools/sectrustcompat/     # macOS 11 兼容层
 ## 图标
 
 ```bash
-go run tools/genicon/main.go    # source.png → app/assets/icon.png (256²) + icon.ico (16–256 共 9 尺寸)
+go run tools/genicon/main.go    # source.png → icon.png (256²)、tray.png (44²) 与 icon.ico (16–256 共 9 尺寸)
 go run github.com/akavel/rsrc@latest -ico app/assets/icon.ico -o rsrc_windows_amd64.syso
 ```
 
 - 源图 `tools/genicon/source.png` 是原版美术资源（1024²，绿色钥匙 + 环内深蓝终端提示符），**不要重画**
 - `genicon` 只做盒式缩放，按预乘 alpha 平均，避免透明边缘渗色
-- 窗口与托盘图标：`//go:embed assets/icon.png`（`app/icon.go`）；登录页与侧边栏用 `ui.Image` 绘制同一张
+- 窗口图标与非 macOS 托盘图标：`//go:embed assets/icon.png`（`app/icon.go`）；登录页与侧边栏用 `ui.Image` 绘制同一张
 - macOS 菜单栏用单色模板图 `app/assets/tray.png`，由同一源图按「与原图背景色的距离」提取轮廓生成
-- exe 图标：`rsrc_windows_amd64.syso` 编进二进制，**随仓库提交**（18KB，只有图标变化时才变）；改图标后 `go generate ./...` 重新生成
+- exe 图标：`rsrc_windows_amd64.syso` 编进二进制，**随仓库提交**（约 50KB，只有图标变化时才变）；改完 PNG/ICO 后 `go generate .` 重建 .syso
 
 ## 打包
 
-macOS 的 `.app` 与 DMG 由 `mygo build` 产出，配置在 `mygo.json`：
+macOS 的 `.app` 由 `mygo build` 产出，配置在 `mygo.json`；发布的 DMG 不经过它（见下）：
 
 ```bash
-# 双架构 .app（arm64 + amd64 由 lipo 合并）与 DMG，需在 macOS 上执行
-MYGO_LDFLAGS="-macos 11.0" \
-  go run github.com/egoist/mygo/cmd/mygo@latest build -platform darwin/universal
+# 双架构 .app（arm64 + amd64 由 lipo 合并），需在 macOS 上执行
+MYGO_LDFLAGS="-X main.version=$TAG -macos 11.0" \
+  go run github.com/egoist/mygo/cmd/mygo@latest build \
+    -platform darwin/universal -skip-notarize -skip-dmg
 ```
 
 `darwin/universal` 分别编译 arm64 与 amd64 再合成，一个包同时支持 Apple Silicon 与 Intel。
+CI 之后再加 `tools/sectrustcompat` 兼容层、重新 `codesign`（ad hoc），并用 `hdiutil` 制作
+DMG：`mygo build` 自己打的 DMG 会包含加兼容层之前的包，不能用于发布。
 
 ### 最低系统版本
 
@@ -121,10 +126,12 @@ MYGO_LDFLAGS="-macos 11.0" \
 
 ```bash
 go run tools/machoinfo/main.go \
-  dist/darwin-universal/sshkeygate.app/Contents/MacOS/sshkeygate
+  dist/darwin-universal/sshkeygate.app/Contents/MacOS/sshkeygate.bin
 # arm64   minos=11.0 sdk=26.2
 # x86_64  minos=11.0 sdk=26.2
 ```
+
+加兼容层后 `Contents/MacOS/sshkeygate` 是启动脚本，真正的 Mach-O 是 `sshkeygate.bin`。
 
 Go 1.27 的 `crypto/x509` 还硬引用了 macOS 12 才有的 `SecTrustCopyCertificateChain`，
 所以包里附带 `Contents/Frameworks/libsectrust_compat.dylib`（用旧 API 实现该符号）
@@ -132,7 +139,7 @@ Go 1.27 的 `crypto/x509` 还硬引用了 macOS 12 才有的 `SecTrustCopyCertif
 
 ### 部署时的坑
 
-- **必须 `open <包>` 启动**：直接跑 `Contents/MacOS/sshkeygate.bin` 会
+- **通过启动脚本或 `open <包>` 启动**：直接跑 `Contents/MacOS/sshkeygate.bin` 会
   `dyld: Symbol not found: _SecTrustCopyCertificateChain`，兼容层由启动脚本注入
 - **重新部署前 `pkill -9`**：`SIGTERM` 后旧进程若残留，单实例锁会把新实例当成二次
   启动转发过去再退出，表现为「进程在跑但没有 socket」
@@ -142,8 +149,8 @@ Go 1.27 的 `crypto/x509` 还硬引用了 macOS 12 才有的 `SecTrustCopyCertif
 
 ### 签名与公证
 
-未签名时 MyGo 用 `-`（ad hoc 签名），**只能在构建它的那台 Mac 上运行**，拷到别的机器会被
-Gatekeeper 拦下。对外分发需要 Apple Developer 账号：
+未签名时 MyGo 用 `-`（ad hoc 签名）：本机直接运行，拷到别的机器首次打开会被 Gatekeeper
+拦下，需要手动放行（见 README「下载」）。对外分发需要 Apple Developer 账号：
 
 1. **Developer ID 签名**——`mygo.json` 里设 `macos.signingIdentity`：
    ```json
@@ -169,6 +176,9 @@ Gatekeeper 拦下。对外分发需要 Apple Developer 账号：
 |---|---|---|
 | Windows | 可执行文件所在目录里的 `sshkeygate.exe` | `update-windows-amd64.json` |
 | macOS | 整个 `.app` 包 | `update-darwin-universal.json` |
+
+Windows 的更新存档里只有一个 `sshkeygate.exe`，而 mygo 会保留正在运行的入口文件名：
+安装时必须就叫 `sshkeygate.exe`，否则新版本会以另一个文件名落下，重启后仍运行旧文件。
 
 清单与存档同发布在 release 里，`mygo.json` 的 `updates` 把地址与公钥编进程序：
 
@@ -202,8 +212,8 @@ MYGO_UPDATER_PRIVATE_KEY=... go run ./tools/updatesign \
   -app dist/darwin-universal/sshkeygate.app -tag v0.4.0 -out updates
 ```
 
-**限制。** 应用必须能写自己所在的目录：Windows 放在用户可写的文件夹里、macOS 拖进
-`/Applications` 且归当前用户所有。装在管理员所有的位置时，配置页会说明无法自动更新。
+**限制。** 应用必须能写自己所在的目录：Windows 是 exe 所在的目录，macOS 是 `.app` 所在的
+目录（通常是 `/Applications`）。当前用户对该目录没有写权限时，配置页会说明无法自动更新。
 
 ## 发版
 
@@ -255,7 +265,7 @@ git push origin v0.4.0
     macOS 隐藏时同时切到 `Accessory` 策略退出 Dock，`ShowWindow` 里先切回 `Regular`
 14. **清空数据是唯一的出路**：密码只用于派生 `enc_key`，丢了就没有恢复途径，所以解锁页
     提供 `Vault.Destroy()`。它两步确认（第二步要输入本地化的「清空」二字），删 `vault.json`、
-    `keys/*`、`agent.log`、`prefs.json`。`SecretStore` 没有删除接口，`device_key` 留着——
+    `keys/*`、`prefs.json`，并清空 `agent.log`。`SecretStore` 没有删除接口，`device_key` 留着——
     没有旧的盐与密码它解不开任何东西，下次建库复用
 15. **解锁失败退避**：连续 3 次错误后按 1/2/4/8… 秒递增，上限 60 秒，成功即清零。在
     PBKDF2 之前拦下，所以爆破成本从「每次 10 万轮」变成「每次还要等」
@@ -269,10 +279,15 @@ git push origin v0.4.0
     连得上就记 `conflict`，托盘显示「被占用」
 19. **内存擦除尽力而为**：统一走 `internal/memguard`，私钥用 `sshkey.Key.Wipe()`；密码与
     口令 API 一律收 `[]byte`，调用方负责擦自己的切片。覆盖范围、残留与边界见「安全实现」，
-    不要把擦除当安全边界；`runtime/secret` 在 Windows / macOS 上是空操作，因此不采用
+    不要把擦除当安全边界；`runtime/secret` 在 Go 1.27 仍需 `GOEXPERIMENT=runtimesecret`，
+    默认构建不启用，因此不采用
 20. **保持与 Flutter 版相同的 PBKDF2 轮数**（见「安全实现」），解锁延迟一致
 21. **不把签名放进独立进程**做内存隔离
 22. **macOS 最低版本 11.0**（Big Sur）：`Info.plist` 与 `-macos` 两处都要设，覆盖 Intel 与 Apple Silicon
+23. **审批模式只有「每次确认」在运行**：`policy.Mode` 定义了 EveryRequest / Session /
+    TimedMinutes / TrustedProcess 四个值，但设置页没有入口，`SetMode` 只在测试里调用；
+    实际行为恒为 EveryRequest，信任程序列表在任何模式下都直接放行。会话/定时授权是
+    未接线的代码，不要当成已有功能来写文档
 
 ## 安全实现
 
@@ -289,7 +304,8 @@ keys/<id> = AES-256-GCM(私钥 PEM, enc_key)
 - `device_key`（32 字节）只在系统凭据库：Windows Credential Manager / macOS Keychain。
   其余全部加密落盘，因此不受 `Secrets` 单条 2560 字节上限约束
 - 每把私钥单独一个文件，不进入 vault 元数据
-- 所有写入先写临时文件再 `rename`，避免半写状态
+- `vault.json` 与 `keys/<id>.bin` 的写入先写临时文件再 `rename`，避免半写状态；
+  `prefs.json` 与 `agent.log` 不走这条路径
 - 改密分两阶段：先写 `vault.migrate`（旧盐值 + 旧密文 + 旧私钥文件），成功后才删；
   `Open` 时检测并恢复
 - `Vault.ChangePassword` 用所有权标志转移 `newKey`：成功时 vault 接管，失败时才清零。
@@ -300,8 +316,8 @@ keys/<id> = AES-256-GCM(私钥 PEM, enc_key)
 
 | 状态 | 内存中有什么 |
 |---|---|
-| 锁定 | 无密钥材料，SSH 请求直接失败 |
-| 解锁 | 元数据、公钥 blob、32 字节 `enc_key`（尽力 `mlock`/`VirtualLock`） |
+| 锁定 | `device_key`（32 字节，进程启动时从凭据库读出，锁定不清除）；`enc_key`、元数据与私钥都不在 |
+| 解锁 | 元数据、公钥 blob、32 字节 `enc_key`（尽力 `mlock`/`VirtualLock`），以及常驻的 `device_key` |
 | 签名 | 单条私钥的 PEM 与解析后的密钥对象，签名后 `Wipe` |
 
 - 擦除统一走 `internal/memguard.Bytes`：`clear(b)` + `runtime.KeepAlive(b)`，
@@ -343,7 +359,9 @@ keys/<id> = AES-256-GCM(私钥 PEM, enc_key)
 | device_key | Credential Manager / Keychain，account `device_key` |
 
 **vault 明文结构**：`{keys[], trustedPaths[], trustedPrograms[], settings{}}`，**不含私钥**。
-**settings 字段**：`confirmTimeoutSeconds`(30)、`lockOnScreenLock`(true)、`trustVerification`(["path","mtime"])。
+`trustedPaths` 是旧版遗留字段，当前代码不写入。
+**settings 字段**：`confirmTimeoutSeconds`(30)、`lockOnScreenLock`(true)、
+`trustVerification`(["path","mtime"])、`theme`("system")、`language`("system")。
 
 ## Agent 端点
 
