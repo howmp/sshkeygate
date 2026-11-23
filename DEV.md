@@ -58,6 +58,7 @@ tools/updatesign/         # 更新归档签名 + 清单生成
 tools/machoinfo/          # 读 Mach-O 架构与 minos
 tools/sectrustcompat/     # macOS 11 兼容层
 tools/fakeagent/          # 手动验证管道冲突的假 agent
+tools/preview/            # 重新生成 README 的截图
 docs/screenshots/         # README 用的界面截图（由预览测试生成）
 ```
 
@@ -102,12 +103,22 @@ go run github.com/akavel/rsrc@latest -ico app/assets/icon.ico -o rsrc_windows_am
 
 ## 截图
 
-README 里的 `docs/screenshots/*.png` 都由预览测试渲染，不是手工截图；改了界面就重新生成并
-一起提交，否则用户看到的是旧版本的样子。
+README 里的 `docs/screenshots/*.png` 都由预览测试渲染，不是手工截图。用工具重新生成，
+版本号由它传给测试：
 
 ```bash
-SSHKEYGATE_PREVIEW=1 go test ./app/ -run TestPreview   # 产物在 dist/preview
+go run tools/preview/main.go -version v0.4.0
 ```
+
+工具先清空 `dist/preview`，跑 `TestPreview`，再把七张指定的渲染复制成 README 用的文件名，
+并拒绝 `docs/screenshots` 里出现 README 不用的图片。省略 `-version` 时取最新的 git tag。
+
+**发版前必须重新生成并提交**，否则用户看到的截图是旧版本的样子（侧边栏与「自动更新」行
+都印着版本号）。渲染是确定的：日志时间戳固定在 `previewNow`，同一版本两次运行得到逐字节
+相同的 PNG，所以 diff 里只会出现真正改过的界面。
+
+直接跑测试（`SSHKEYGATE_PREVIEW=1 go test ./app/ -run TestPreview`）仍可用于样式自查，
+产物在 `dist/preview`，不会改动 README 的图片。
 
 | README 文件 | 来源 | 内容 |
 |---|---|---|
@@ -119,8 +130,8 @@ SSHKEYGATE_PREVIEW=1 go test ./app/ -run TestPreview   # 产物在 dist/preview
 | `import.png` | `light-import-zh.png` | 导入页 |
 | `settings.png` | `light-settings-zh-tall.png` | 配置页全图（1200px 高，免滚动） |
 
-测试里为这几张图准备了固定数据：版本号 `v0.3.2`、`%APPDATA%\sshkeygate` 数据目录、
-三条信任记录与八条带时间差的日志，渲染结果与发布版一致。
+测试里为这几张图准备了固定数据：`%APPDATA%\sshkeygate` 数据目录、三条信任记录与八条
+带时间差的日志，渲染结果与发布版一致。
 
 ## 打包
 

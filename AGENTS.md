@@ -16,6 +16,16 @@ GOOS=darwin GOARCH=arm64 go build ./...   # Windows 上也要跑，覆盖 macOS 
 
 Windows 构建**必须带 `-H windowsgui`**，否则运行时弹出控制台黑框。
 
+## 发版前必须做
+
+```bash
+go run tools/preview/main.go -version v<新版本>
+git add docs/screenshots            # 与 tag 同一次提交推送
+```
+
+README 的截图里印着版本号（侧边栏、配置页「自动更新」），**不重新生成就会一直是上一个版本
+的样子**。漏掉这步不会让 CI 失败，只有用户能看出来。工具会拒绝没用到的图片文件。
+
 ## MyGo 的坑
 
 这些踩过多次，写代码前先看一眼：
@@ -70,4 +80,4 @@ Windows 构建**必须带 `-H windowsgui`**，否则运行时弹出控制台黑�
 - 不要在代码里加注释解释显而易见的事
 - 跟现有风格走：错误用 `errors.New`，文案进 `app/i18n.go` 的中英双表
 - 改视图后可以渲染预览自查：`SSHKEYGATE_PREVIEW=1 go test ./app/ -run TestPreview`，
-  产物在 `dist/preview/`
+  产物在 `dist/preview/`；要更新 README 的截图用 `tools/preview`（见「发版前必须做」）

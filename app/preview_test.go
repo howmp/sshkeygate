@@ -26,12 +26,13 @@ func TestPreview(t *testing.T) {
 	if err := os.MkdirAll(out, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
+	version := previewVersion()
 
 	// The unlock screen as a restart draws it: the appearance comes from
 	// prefs.json, before the vault is open.
 	for _, mode := range []string{ThemeLight, ThemeDark} {
 		unlock := newTestApp(t, true)
-		unlock.version = "v0.3.2"
+		unlock.version = version
 		unlock.language = LangChinese
 		unlock.themeMode = mode
 		unlock.Vault.Lock()
@@ -49,7 +50,7 @@ func TestPreview(t *testing.T) {
 		a := newTestApp(t, true)
 		// The version and the data directory are what a released install
 		// shows, not the test build's temporary ones.
-		a.version = "v0.3.2"
+		a.version = version
 		a.DataDir = `C:\Users\admin\AppData\Roaming\sshkeygate`
 		a.themeMode = mode
 		if _, _, err := a.Keys.Import(keyPEM, "github-ed25519", nil, keystore.SourceManual); err != nil {
@@ -160,11 +161,17 @@ var previewPrograms = []vault.TrustedProgram{
 		SHA256: "276923f5160b3c2e1de9a16c5b0b7c0e0a1d2c3b4a5f6e7d8c9b0a1f2e3d4c5b"},
 }
 
+// previewNow is the moment the log entries are stamped from. It is fixed so
+// that regenerating the screenshots produces the same bytes every time:
+// otherwise every run would rewrite all seven images and hide the ones that
+// actually changed.
+var previewNow = time.Date(2026, 11, 23, 9, 12, 0, 0, time.UTC)
+
 // writePreviewFixtures fills the trusted-program list and the log with
 // plausible rows, so the pages they belong to do not render empty.
 //
 // The log is written as JSONL and read back, because Log.Add stamps every
-// entry with the current time: rows a second apart are what a real log looks
+// entry with the current time: rows minutes apart are what a real log looks
 // like.
 func writePreviewFixtures(t *testing.T, a *App) {
 	t.Helper()
@@ -198,7 +205,7 @@ func writePreviewFixtures(t *testing.T, a *App) {
 	if err != nil {
 		t.Fatalf("create log: %v", err)
 	}
-	now := time.Now()
+	now := previewNow
 	for i := len(entries) - 1; i >= 0; i-- {
 		e := entries[i]
 		line, err := json.Marshal(auditlog.Entry{
@@ -223,6 +230,15 @@ func writePreviewFixtures(t *testing.T, a *App) {
 		t.Fatalf("load log: %v", err)
 	}
 	a.Log = loaded
+}
+
+// previewVersion is the version the screenshots show. tools/preview passes the
+// one the release will carry, so the images match the tag they ship with.
+func previewVersion() string {
+	if v := os.Getenv("SSHKEYGATE_PREVIEW_VERSION"); v != "" {
+		return v
+	}
+	return "v0.0.0-preview"
 }
 
 func writePreview(t *testing.T, dir, name string, a *App, w, h int, before func()) {
