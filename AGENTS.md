@@ -42,6 +42,11 @@ README 的截图里印着版本号（侧边栏、配置页「自动更新」）�
 - **托盘**：Windows 左键走 `OnClick`、右键走 `OnRightClick` 并自动弹出 `SetMenu` 给的菜单。
   macOS 的 status item 一旦有菜单，任何点击都先弹菜单——这就是 macOS 上 `refreshTray`
   直接返回、右键才临时挂菜单的原因
+- **`InputMethod(false)` 只是让这个输入框忽略输入法**，不改系统设置，也不能把输入法"切到
+  英文"。保险库密码框用它（`vaultPasswordInput`）；导入口令、Bitwarden 主密码这类用户
+  既有的口令不要用，它们可能含中文
+- 测输入法/焦点别去点标签：`ui.TextInput` 没有可点的文字，`Tester.Click` 找不到目标。
+  用 `Tester.Key(0, ui.KeyTab)` 聚焦，再断言 `Tester.TextInputActive()`
 
 ## 平台差异
 

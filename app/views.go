@@ -75,13 +75,11 @@ func (a *App) unlockView(c *ui.Context, p *Palette) {
 			ui.Text(c, subtitle).FontSize(12).TextColor(p.TextLight).TextAlign(ui.Center)
 
 			ui.Text(c, a.t("unlock.password")).FontSize(12).Bold().TextColor(p.TextSecondary)
-			input := ui.TextInput(c, &a.password).Password().Placeholder(a.t("unlock.placeholder")).
-				Background(p.Input).Border(1, p.Border).Radius(8)
+			input := vaultPasswordInput(c, p, &a.password, a.t("unlock.placeholder"))
 			input.OnSubmit(func() { a.SubmitUnlock() })
 			if firstRun {
 				ui.Text(c, a.t("unlock.confirm")).FontSize(12).Bold().TextColor(p.TextSecondary)
-				confirm := ui.TextInput(c, &a.password2).Password().Placeholder(a.t("unlock.repeat")).
-					Background(p.Input).Border(1, p.Border).Radius(8)
+				confirm := vaultPasswordInput(c, p, &a.password2, a.t("unlock.repeat"))
 				confirm.OnSubmit(func() { a.SubmitUnlock() })
 			}
 			if a.unlockErr != "" {
@@ -924,14 +922,11 @@ func (a *App) changePasswordView(c *ui.Context, p *Palette) {
 			Background(p.Card).Gap(8).Children(func() {
 			ui.Text(c, a.t("settings.changePassword")).FontSize(16).Bold().TextColor(p.TextBody)
 			a.fieldLabel(c, p, a.t("password.current"))
-			ui.TextInput(c, &a.oldPwd).Password().
-				Background(p.Input).Border(1, p.Border).Radius(8)
+			vaultPasswordInput(c, p, &a.oldPwd, "")
 			a.fieldLabel(c, p, a.t("password.new"))
-			ui.TextInput(c, &a.newPwd).Password().Placeholder(a.t("unlock.placeholder")).
-				Background(p.Input).Border(1, p.Border).Radius(8)
+			vaultPasswordInput(c, p, &a.newPwd, a.t("unlock.placeholder"))
 			a.fieldLabel(c, p, a.t("password.confirm"))
-			ui.TextInput(c, &a.newPwd2).Password().
-				Background(p.Input).Border(1, p.Border).Radius(8)
+			vaultPasswordInput(c, p, &a.newPwd2, "")
 			if a.changeErr != "" {
 				ui.Text(c, a.changeErr).FontSize(12).TextColor(p.Red)
 			}
@@ -951,6 +946,24 @@ func (a *App) changePasswordView(c *ui.Context, p *Palette) {
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────
+
+// vaultPasswordInput draws a masked field for the vault password.
+//
+// The vault password is ASCII, and someone typing with a Chinese input method
+// would otherwise have to switch it off by hand every time - or worse, type a
+// password with the method on and get full-width characters they cannot see.
+// InputMethod(false) leaves the system setting alone and has the focused field
+// take the keys of the keyboard's layout, so a Chinese input method composes
+// nothing here. Passphrases of imported keys are not masked this way: those
+// are existing secrets and may well be Chinese.
+func vaultPasswordInput(c *ui.Context, p *Palette, value *string, placeholder string) ui.Element {
+	input := ui.TextInput(c, value).Password().InputMethod(false).
+		Background(p.Input).Border(1, p.Border).Radius(8)
+	if placeholder != "" {
+		input = input.Placeholder(placeholder)
+	}
+	return input
+}
 
 // iconButton draws a small square button with an SVG icon.
 func iconButton(c *ui.Context, p *Palette, svg string, colour ui.Color, tip string) ui.Element {

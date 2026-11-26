@@ -322,6 +322,11 @@ git push origin v0.4.0
     TimedMinutes / TrustedProcess 四个值，但设置页没有入口，`SetMode` 只在测试里调用；
     实际行为恒为 EveryRequest，信任程序列表在任何模式下都直接放行。会话/定时授权是
     未接线的代码，不要当成已有功能来写文档
+24. **保险库密码框关掉输入法**（不是切换系统输入法）：密码不含中文，用中文输入法的人
+    每次解锁都要手动切一次，还可能把全角字符打进看不见的密码框。这些框统一走
+    `vaultPasswordInput`（`ui.TextInput(...).InputMethod(false)`），按键直接按键盘布局
+    出字符、不做组合。导入口令与 Bitwarden 主密码**不要**这么做——它们是用户既有的
+    口令，可能本来就含中文
 
 ## 安全实现
 
